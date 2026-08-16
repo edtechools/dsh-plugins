@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "es2024",
+    "lib": ["es2024"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    /*
+     * Local typecheck only, never packaging. These two peer dependencies are
+     * Service Definitions the harness resolves at runtime through the profile's
+     * flat module fallback; they cannot be installed from npm today because
+     * `@deepseek-ai/dsh-tools` pulls the unpublished `@deepseek-ai/dsh-type-meta`.
+     * The build (`tsdown`) externalizes them and never needs these paths, so a
+     * checkout without the harness still builds — only `tsc` needs them.
+     */
+    "paths": {
+      "@deepseek-ai/dsh-tools": ["../../../deepseek-harness/packages/core/tools/src/index.ts"],
+      "@deepseek-ai/dsh-credentials": ["../../../deepseek-harness/packages/credentials/credentials/src/index.ts"]
+    }
+  },
+  "include": ["src"]
+}

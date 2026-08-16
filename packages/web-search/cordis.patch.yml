@@ -1,0 +1,6 @@
+# Bundle layer for dsh-plugin-web-search. Override any field from the profile's
+# own cordis.patch.yml — a patch replaces a row's whole `config`, so restate
+# every key you need, not just the changed one.
+- insert:
+    - id: web-search-tool
+      name: dsh-plugin-web-search

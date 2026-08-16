@@ -1,0 +1,6 @@
+# Bundle layer for dsh-plugin-turn-nav, applied when a profile lists this
+# bundle. The row mounts the node half; the browser half is discovered from
+# this package's `dsh.client` declaration and served at /plugins/<name>/client.js.
+- insert:
+    - id: ui-turn-nav
+      name: dsh-plugin-turn-nav

@@ -1,0 +1,9 @@
+packages:
+  - packages/*
+
+# Peer dependencies here name harness Service Definitions that the running dsh
+# resolves through its profile module fallback, not from this workspace. Auto
+# installing them would fetch a second copy — and today it simply fails, because
+# `@deepseek-ai/dsh-tools` pulls the unpublished `@deepseek-ai/dsh-type-meta`.
+# The harness's own profile template disables this for the same reason.
+autoInstallPeers: false
