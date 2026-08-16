@@ -38,6 +38,12 @@ importers:
       '@deepseek-ai/cordis':
         specifier: ^4.0.1
         version: 4.0.1
+      '@deepseek-ai/dsh-credentials':
+        specifier: link:../../../deepseek-harness/packages/credentials/credentials
+        version: link:../../../deepseek-harness/packages/credentials/credentials
+      '@deepseek-ai/dsh-tools':
+        specifier: link:../../../deepseek-harness/packages/core/tools
+        version: link:../../../deepseek-harness/packages/core/tools
       '@deepseek-ai/schemastery':
         specifier: ^3.18.1
         version: 3.18.1

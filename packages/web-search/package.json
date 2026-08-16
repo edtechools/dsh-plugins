@@ -30,6 +30,8 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-credentials": "link:../../../deepseek-harness/packages/credentials/credentials",
+    "@deepseek-ai/dsh-tools": "link:../../../deepseek-harness/packages/core/tools",
     "@deepseek-ai/schemastery": "^3.18.1",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3"
