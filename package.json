@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm -r build",
+    "check": "node scripts/check.mjs",
     "typecheck": "tsc -b packages/turn-nav packages/web-search"
   },
   "devDependencies": {
