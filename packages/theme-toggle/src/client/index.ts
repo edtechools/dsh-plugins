@@ -22,50 +22,64 @@ export const inject = ['slots', 'theme']
 /** Slot order: sits above Settings, right-aligned, ahead of any later action. */
 const SLOT_ORDER = 10
 
+/*
+ * Mirrors the Settings trigger row (ui-settings-general `SettingsRoot.module.css`
+ * `.trigger` / `.trigger.rail`) value for value, so the two rows in the sidebar
+ * foot read as one control group. These are copied rather than inherited — the
+ * harness's class names are hashed per build and cannot be targeted from here —
+ * so a restyle upstream needs the same edit here.
+ */
 const CSS = `
   .tt-btn {
-    all: unset;
-    box-sizing: border-box;
+    flex: none;
     display: flex;
     align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
+    gap: 8px;
+    width: calc(100% + 8px);
+    height: 34px;
+    margin: 4px -4px 4px;
+    padding: 6px 2px 6px 10px;
+    box-sizing: border-box;
+    border: none;
+    border-radius: 12px;
+    background: transparent;
     cursor: pointer;
-    color: var(--dsw-alias-label-secondary);
-    transition: background-color 0.15s ease, color 0.15s ease;
+    overflow: hidden;
+    color: var(--dsw-alias-label-primary);
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 22px;
   }
   .tt-btn:hover {
     background: var(--dsw-alias-interactive-bg-hover);
-    color: var(--dsw-alias-label-primary);
   }
   .tt-btn:focus-visible {
     outline: 2px solid var(--dsw-alias-state-business-primary);
-    outline-offset: 2px;
+    outline-offset: -2px;
+  }
+  /* Rail trigger: the same 36x36 circle box as the other rail controls. */
+  .tt-btn--rail {
+    width: 36px;
+    height: 36px;
+    margin: 8px 0 10px;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+    border-radius: 50%;
   }
   .tt-btn svg {
+    flex: none;
     width: 16px;
     height: 16px;
     display: block;
   }
-  /* Wide column: hug the right edge, away from the Settings label. */
-  .tt-row {
-    display: flex;
-    width: 100%;
-    padding: 2px 8px;
-    justify-content: flex-end;
-  }
-  .tt-row--rail {
-    justify-content: center;
-    padding: 2px 0;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .tt-btn { transition: none; }
+  .tt-label {
+    overflow: hidden;
+    white-space: nowrap;
   }
 `
 
-/** Sun mark, shown while the light scheme is active. */
+/** Sun mark, shown while the dark scheme is active — clicking returns to light. */
 function sunIcon(): React.ReactElement {
   return React.createElement('svg', { viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': 'true' },
     React.createElement('circle', { cx: 8, cy: 8, r: 3.25, stroke: 'currentColor', strokeWidth: 1.4 }),
@@ -81,7 +95,7 @@ function sunIcon(): React.ReactElement {
   )
 }
 
-/** Crescent mark, shown while the dark scheme is active. */
+/** Crescent mark, shown while the light scheme is active — clicking goes dark. */
 function moonIcon(): React.ReactElement {
   return React.createElement('svg', { viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': 'true' },
     React.createElement('path', {
@@ -113,15 +127,20 @@ export function apply(ctx: any): void {
     React.useEffect(() => ctx.on('theme/change', (next: any) => setSnapshot(next)), [])
 
     const isDark = snapshot.active.colorScheme === 'dark'
-    const label = isDark ? '切换到浅色' : '切换到深色'
-    return React.createElement('div', { className: 'tt-row' + (props.wide === false ? ' tt-row--rail' : '') },
-      React.createElement('button', {
-        type: 'button',
-        className: 'tt-btn',
-        title: label,
-        'aria-label': label,
-        onClick: () => ctx.theme.setTheme(isDark ? 'light' : 'dark'),
-      }, isDark ? moonIcon() : sunIcon()),
+    const wide = props.wide !== false
+    // Icon and label both name the destination, so the row reads as the action
+    // it performs — the same way the Settings row beside it names where it goes.
+    const label = isDark ? '浅色模式' : '深色模式'
+    const action = isDark ? '切换到浅色模式' : '切换到深色模式'
+    return React.createElement('button', {
+      type: 'button',
+      className: 'tt-btn' + (wide ? '' : ' tt-btn--rail'),
+      title: action,
+      'aria-label': action,
+      onClick: () => ctx.theme.setTheme(isDark ? 'light' : 'dark'),
+    },
+      isDark ? sunIcon() : moonIcon(),
+      wide ? React.createElement('span', { className: 'tt-label' }, label) : null,
     )
   }
 
