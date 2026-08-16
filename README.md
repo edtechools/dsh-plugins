@@ -50,8 +50,11 @@ allowBuilds:
 1. 建 `packages/<name>/`，放 `package.json`（`dsh.bundle.patch`；有浏览器半边就再加 `dsh.client`）、`cordis.patch.yml`、`tsdown.config.ts`、`src/`。
 2. `pnpm install && pnpm -r build`
 3. `dsh plugin --profile web add ./packages/<name>`
+4. **`pnpm check`** —— 新包会被自动发现，不用改脚本。
 
 从最接近的现有包复制改，别从零写——那两份构建配置里编码了一些不明显的约束。
+
+`pnpm check` 把下面两节约束里那些**不出声的失败**变成显式报错：能否在 profile 上下文中导入、闭包工厂协议是否完整、产物 id 与 `BUNDLE_ID` 是否等于包名、`react` 是否仍为 external、产物里每个 `require` 是否都在平台表内、`cordis.patch.yml` 引用名是否与包名一致、平台表是否与 harness 同步。它只读不写，任一项不过就以非零码退出。
 
 ## 约束一（仅限本地开发）：`link:` 够不着扁平兜底目录
 
@@ -119,4 +122,6 @@ window.__ModuleLoader__.load({ id: "dsh-plugin-turn-nav", factory: (require) => 
 
 搬出 harness 仓库消除的是合并冲突，不是 API 漂移。`turn-nav` 读了好几个 harness 在预发布期不作兼容承诺的接口——`ctx.sessions.binding()`、对话快照的节点 `kind` 取值、`[data-conversation-scroll]` 与 `[data-chat-anchor-key]` 这两个 DOM 约定、`--dsw-alias-*` 设计令牌、以及 `shell.overlay` 插槽。要预期 harness 升级可能让导航条**静默失效**：上面每一处读取都是无类型的，TypeScript 帮不上忙。
 
-这一条和上面两条约束有个共同点：**失败都是静默的**。升级 harness 之后，至少跑一遍两个插件的导入检查和 `PLATFORM_MODULES` 比对。
+这一条和上面两条约束有个共同点：**失败都是静默的**。所以升级 harness 之后先跑 `pnpm check`——平台表漂移和 peer 解析断裂它都能抓到。但它抓不到本节这类 API 漂移：那些读取全是无类型的，只能靠实际打开会话看导航条还在不在。
+
+`pnpm check` 需要 harness checkout 来比对平台表，默认找 `~/deepseek-harness`，不在那儿就设 `DSH_HARNESS` 指向它。找不到时该项**显式跳过并说明原因**，不会假装通过。
