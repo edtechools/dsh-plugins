@@ -1,5 +1,5 @@
 /**
- * Web search tool over the Bocha search API.
+ * `bocha_web_search` tool over the Bocha (博查) search API.
  *
  * Every deployment-varying value is a validated `Config` field rather than a
  * constant, and the API key is held as a credential *reference* — the
@@ -43,8 +43,11 @@ export function apply(ctx: Context, config: Config): void {
   const ref = credentialRef(config.apiKeyRef)
 
   ctx.tools.register(defineTool({
-    name: 'web-search',
-    description: 'Search the web for information.',
+    // Named for its source, not for the capability: the harness's own web
+    // capability already registers `web_search`, and two tools whose names
+    // differ only by a separator give the model nothing to choose between.
+    name: 'bocha_web_search',
+    description: 'Search the web through the Bocha (博查) search API. Strongest on Chinese-language queries and sources from mainland China.',
     parameters: {
       query: { type: 'string', required: true, description: 'The search query' },
       count: { type: 'number', description: `Number of results (default ${config.defaultCount})` },

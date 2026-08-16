@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-web-search",
   "version": "0.1.0",
-  "description": "Web search tool over the Bocha search API, configured through cordis.yml with the API key held as a credential reference",
+  "description": "bocha_web_search tool over the Bocha (博查) search API, configured through cordis.yml with the API key held as a credential reference",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",

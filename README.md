@@ -5,7 +5,7 @@ Out-of-tree plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepse
 | Package | Faces | What it does |
 |---|---|---|
 | [`packages/turn-nav`](packages/turn-nav) | node + browser | Conversation turn navigation rail at the left edge of the chat |
-| [`packages/web-search`](packages/web-search) | node | `web-search` tool over the Bocha search API |
+| [`packages/web-search`](packages/web-search) | node | `bocha_web_search` tool over the Bocha (博查) search API |
 
 ## Install into a profile
 
