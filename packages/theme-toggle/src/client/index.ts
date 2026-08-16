@@ -3,10 +3,12 @@
  * foot, beside Settings.
  *
  * The theme is read and written through the `theme` service the harness's
- * ui-theme plugin provides — a cordis service, never a value import, so this
- * bundle stays free of any specifier the shell's frozen module table cannot
- * answer. `setTheme` is the product's own preference write path, so the switch
- * persists exactly like the Appearance row in Settings and both stay in sync.
+ * ui-theme plugin provides. Reaching another plugin through a cordis service
+ * rather than importing its module is what keeps this bundle free of any
+ * specifier the shell's frozen module table cannot answer; the one value import
+ * here, the icon set, is itself a platform module and stays external.
+ * `setTheme` is the product's own preference write path, so the switch persists
+ * exactly like the Appearance row in Settings and both stay in sync.
  *
  * The product preference has three values (`light` / `dark` / `system`) while a
  * switch has two. This toggles against the *resolved* scheme rather than the
@@ -16,10 +18,13 @@
  */
 
 import * as React from 'react'
+// A platform module, so this stays an external the shell's frozen table answers
+// — the icons are the product's own, drawn on its grid, not a second copy.
+import { IconDarkOutline16, IconLightOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 
 export const inject = ['slots', 'theme']
 
-/** Slot order: sits above Settings, right-aligned, ahead of any later action. */
+/** Slot order: the sidebar foot renders actions above Settings, this one first. */
 const SLOT_ORDER = 10
 
 /*
@@ -79,34 +84,6 @@ const CSS = `
   }
 `
 
-/** Sun mark, shown while the dark scheme is active — clicking returns to light. */
-function sunIcon(): React.ReactElement {
-  return React.createElement('svg', { viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': 'true' },
-    React.createElement('circle', { cx: 8, cy: 8, r: 3.25, stroke: 'currentColor', strokeWidth: 1.4 }),
-    ...[0, 45, 90, 135, 180, 225, 270, 315].map((deg) =>
-      React.createElement('line', {
-        key: deg,
-        x1: 8, y1: 1.4, x2: 8, y2: 3,
-        stroke: 'currentColor',
-        strokeWidth: 1.4,
-        strokeLinecap: 'round',
-        transform: `rotate(${deg} 8 8)`,
-      })),
-  )
-}
-
-/** Crescent mark, shown while the light scheme is active — clicking goes dark. */
-function moonIcon(): React.ReactElement {
-  return React.createElement('svg', { viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': 'true' },
-    React.createElement('path', {
-      d: 'M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8Z',
-      stroke: 'currentColor',
-      strokeWidth: 1.4,
-      strokeLinejoin: 'round',
-    }),
-  )
-}
-
 /**
  * Client plugin body: own the injected stylesheet for the plugin's lifetime and
  * seat the switch in the sidebar foot.
@@ -139,7 +116,7 @@ export function apply(ctx: any): void {
       'aria-label': action,
       onClick: () => ctx.theme.setTheme(isDark ? 'light' : 'dark'),
     },
-      isDark ? sunIcon() : moonIcon(),
+      React.createElement(isDark ? IconLightOutline16 : IconDarkOutline16, { size: 16 }),
       wide ? React.createElement('span', { className: 'tt-label' }, label) : null,
     )
   }
