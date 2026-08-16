@@ -1,53 +1,53 @@
 # dsh-plugins
 
-Out-of-tree plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). Nothing here lives in the harness checkout, so `git pull` on the harness never conflicts with this work.
+给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 用的仓库外插件。这里的东西都不在 harness 的 checkout 里，所以 harness 那边 `git pull` 永远不会跟这些改动冲突。
 
-| Package | Faces | What it does |
+| 包 | 面 | 作用 |
 |---|---|---|
-| [`packages/turn-nav`](packages/turn-nav) | node + browser | Conversation turn navigation rail at the left edge of the chat |
-| [`packages/web-search`](packages/web-search) | node | `bocha_web_search` tool over the Bocha (博查) search API |
+| [`packages/turn-nav`](packages/turn-nav) | node + 浏览器 | 对话区左缘的轮次导航条 |
+| [`packages/web-search`](packages/web-search) | node | 基于博查搜索 API 的 `bocha_web_search` 工具 |
 
-## Install into a profile
+## 装进 profile
 
-Each package is a **bundle** (`dsh.bundle.patch` in its manifest), so `dsh` installs it and appends its layer to the profile itself:
+每个包本身就是一个 **bundle**（manifest 里声明 `dsh.bundle.patch`），所以 `dsh` 会自己把它的层追加进 profile：
 
 ```sh
 pnpm install && pnpm -r build
 dsh plugin --profile web add ./packages/turn-nav ./packages/web-search
-dsh --profile web --dump-config    # one labelled layer per bundle
+dsh --profile web --dump-config    # 每个 bundle 一个带标签的层
 ```
 
-`dsh plugin --profile web remove dsh-plugin-turn-nav` removes both the dependency and its layer. The profile's own `cordis.patch.yml` stays `[]` and is reserved for machine-local overrides of an installed row.
+`dsh plugin --profile web remove dsh-plugin-turn-nav` 会同时移除依赖和它的层。profile 自己的 `cordis.patch.yml` 保持 `[]`，只用来放这台机器专属的行覆盖。
 
-## Adding a plugin
+## 加一个新插件
 
-1. `packages/<name>/` with `package.json` (`dsh.bundle.patch`, plus `dsh.client` if it has a browser half), `cordis.patch.yml`, `tsdown.config.ts`, `src/`.
+1. 建 `packages/<name>/`，放 `package.json`（`dsh.bundle.patch`；有浏览器半边就再加 `dsh.client`）、`cordis.patch.yml`、`tsdown.config.ts`、`src/`。
 2. `pnpm install && pnpm -r build`
 3. `dsh plugin --profile web add ./packages/<name>`
 
-Copy the closest existing package rather than starting from scratch — the two build configs encode constraints that are not obvious.
+从最接近的现有包复制改，别从零写——那两份构建配置里编码了一些不明显的约束。
 
-## Two constraints that will bite you
+## 两个会咬人的约束
 
-### Importing a harness package needs a `link:` devDependency
+### import harness 的包，需要一条 `link:` devDependency
 
-The harness maintains a flat fallback directory at `$DSH_HOME/profiles/node_modules` so bare plugin names resolve. **That fallback is unreachable from here.** `dsh plugin add ./packages/x` records a `link:`, so the package's real path stays under this repository, and Node's parent-directory walk from the real path never reaches `$DSH_HOME/profiles/`.
+harness 会维护一个扁平兜底目录 `$DSH_HOME/profiles/node_modules`，让裸插件名能被解析。**但从这里够不着它。** `dsh plugin add ./packages/x` 记的是 `link:`，包的真实路径留在本仓库内，而 Node 从真实路径往上找 `node_modules` 永远走不到 `$DSH_HOME/profiles/`。
 
-A plugin importing nothing (`turn-nav`'s node half) is unaffected. A plugin importing `@deepseek-ai/dsh-tools` or any other Service Definition fails at load with `ERR_MODULE_NOT_FOUND`. The fix is a `link:` devDependency beside the peer dependency, pointing at the harness checkout:
+什么都不 import 的插件不受影响（`turn-nav` 的 node 半边就是空的）。一旦 import 了 `@deepseek-ai/dsh-tools` 或任何别的 Service Definition，加载时就会 `ERR_MODULE_NOT_FOUND`。解法是在 peerDependency 旁边补一条指向 harness checkout 的 `link:` devDependency：
 
 ```json
 "peerDependencies": { "@deepseek-ai/dsh-tools": "*" },
 "devDependencies": { "@deepseek-ai/dsh-tools": "link:../../../deepseek-harness/packages/core/tools" }
 ```
 
-This resolves to the same physical package the running app uses. It assumes the harness checkout sits beside this repository, and it is the one machine-specific thing in these manifests — drop it if a package is ever published.
+这样解析到的是运行中的 app 正在用的同一份物理包。它假定 harness checkout 就在本仓库旁边，是这些 manifest 里唯一跟机器绑定的东西——哪天要发布某个包，把它删掉。
 
-Peer dependencies must not be auto-installed (`autoInstallPeers: false` in `pnpm-workspace.yaml`): `@deepseek-ai/dsh-tools` pulls the unpublished `@deepseek-ai/dsh-type-meta` and the install fails outright.
+peerDependency 不能自动安装（`pnpm-workspace.yaml` 里的 `autoInstallPeers: false`）：`@deepseek-ai/dsh-tools` 会拉未发布的 `@deepseek-ai/dsh-type-meta`，装一次失败一次。
 
-### A browser half is not an ordinary bundle
+### 浏览器半边不是普通产物
 
-The shell owns a frozen module table and hands each plugin bundle a `require` answering only its platform specifiers. A browser half must therefore be built as a closure factory registered through `window.__ModuleLoader__.load`, with `react` external and everything else inlined. `packages/turn-nav/tsdown.config.ts` documents the three load-bearing rules; bundling React instead of externalizing it ships a second React whose hooks cannot see the shell's dispatcher.
+shell 持有一张冻结的模块表，只把它的平台标识符通过注入的 `require` 交给插件。所以浏览器半边必须打成闭包工厂、经 `window.__ModuleLoader__.load` 注册，`react` 保持 external、其余一律内联。三条要害规则写在 `packages/turn-nav/tsdown.config.ts` 里；把 React 打进去而不是 external，等于多发一份 React，它的 hooks 看不到 shell 的 dispatcher。
 
-## Upgrade risk
+## 升级风险
 
-Moving out of the harness tree removes merge conflicts, not API drift. `turn-nav` reads several interfaces the harness makes no compatibility promise about while it is pre-release — `ctx.sessions.binding()`, the chat snapshot's node `kind` values, the `[data-conversation-scroll]` and `[data-chat-anchor-key]` DOM anchors, `--dsw-alias-*` design tokens, and the `shell.overlay` slot. Expect a harness upgrade to be able to break the rail silently, since every one of those reads is untyped.
+搬出 harness 仓库消除的是合并冲突，不是 API 漂移。`turn-nav` 读了好几个 harness 在预发布期不作兼容承诺的接口——`ctx.sessions.binding()`、对话快照的节点 `kind` 取值、`[data-conversation-scroll]` 与 `[data-chat-anchor-key]` 这两个 DOM 约定、`--dsw-alias-*` 设计令牌、以及 `shell.overlay` 插槽。要预期 harness 升级可能让导航条**静默失效**：上面每一处读取都是无类型的，TypeScript 帮不上忙。
