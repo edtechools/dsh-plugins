@@ -19,11 +19,27 @@
  * `sessions.binding(id).session` (an ObservableSnapshot). DOM anchors:
  * `[data-conversation-scroll]` is the chat scrollport and
  * `[data-chat-anchor-key]` marks each rendered node.
+ *
+ * A switch in the sidebar foot (`sidebar.footer.action`) shows and hides the
+ * rail. It lives here rather than in its own plugin because the state it owns
+ * is this plugin's own visibility — no seam between two plugins to define.
  */
 
 import * as React from 'react'
+// A platform module, so this stays an external the shell's frozen table answers.
+import { IconListPenOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 
 export const inject = ['slots', 'sessions', 'timer']
+
+/**
+ * Where the rail's on/off state is kept. A settings namespace would be the
+ * product-native home, but the api-proxy serves only an allowlist of them and a
+ * plugin distributed outside the harness cannot join it, so this preference is
+ * browser-local rather than part of the settings document.
+ */
+const VISIBILITY_KEY = 'dsh-plugin-turn-nav.visible'
+/** Sidebar foot order: above the theme switch, which sits at 10. */
+const TOGGLE_SLOT_ORDER = 5
 
 /** Vertical pitch per turn, clamped so long conversations still fit before the rail scrolls. */
 const STEP_MIN = 8
@@ -213,7 +229,117 @@ const CSS = `
       animation: none;
     }
   }
+
+  /*
+   * Sidebar switch. Mirrors the Settings trigger row (ui-settings-general
+   * SettingsRoot.module.css, .trigger and .trigger.rail) value for value so the
+   * sidebar foot reads as one control group; the harness's class names are
+   * hashed per build and cannot be targeted from here, so a restyle upstream
+   * needs the same edit here.
+   */
+  /*
+   * The sidebar foot lays its actions out in one nowrap flex row, so two
+   * full-width rows would overlap instead of stacking. Matched by the CSS
+   * module's local-name suffix because the harness hashes the prefix per build;
+   * every plugin seating a full-width row there declares the same rule, which
+   * is idempotent when more than one is installed.
+   */
+  [class*="_footerActions"] {
+    flex-wrap: wrap;
+  }
+  .tnv-row {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: calc(100% + 8px);
+    height: 34px;
+    margin: 4px -4px 4px;
+    padding: 6px 2px 6px 10px;
+    box-sizing: border-box;
+    border: none;
+    border-radius: 12px;
+    background: transparent;
+    cursor: pointer;
+    overflow: hidden;
+    color: var(--dsw-alias-label-primary);
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 22px;
+  }
+  .tnv-row:hover {
+    background: var(--dsw-alias-interactive-bg-hover);
+  }
+  .tnv-row:focus-visible {
+    outline: 2px solid var(--dsw-alias-state-business-primary);
+    outline-offset: -2px;
+  }
+  /* Off: the row stays legible but recedes, so the state reads without a second control. */
+  .tnv-row--off {
+    color: var(--dsw-alias-label-tertiary);
+  }
+  .tnv-row--rail {
+    width: 36px;
+    height: 36px;
+    margin: 8px 0 10px;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+    border-radius: 50%;
+  }
+  .tnv-row svg {
+    flex: none;
+    display: block;
+  }
+  .tnv-row-label {
+    overflow: hidden;
+    white-space: nowrap;
+  }
 `
+
+/** The rail's on/off state, shared by the rail and its sidebar switch. */
+interface Visibility {
+  get: () => boolean
+  toggle: () => void
+  subscribe: (listener: () => void) => () => void
+}
+
+/** Build the visibility store, restoring the last browser-local choice. */
+function createVisibility(): Visibility {
+  const listeners = new Set<() => void>()
+  let visible = true
+  try {
+    visible = window.localStorage.getItem(VISIBILITY_KEY) !== 'off'
+  } catch {
+    // Storage unreachable (private mode, blocked site data). The rail has no
+    // other durable home, so it starts visible and this session simply forgets.
+  }
+  return {
+    get: () => visible,
+    toggle: () => {
+      visible = !visible
+      try {
+        window.localStorage.setItem(VISIBILITY_KEY, visible ? 'on' : 'off')
+      } catch {
+        // Same unreachable storage; the toggle still applies for this session.
+      }
+      for (const listener of listeners) listener()
+    },
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+  }
+}
+
+/** Subscribe a component to the visibility store. */
+function useVisible(visibility: Visibility): boolean {
+  const [visible, setVisible] = React.useState(visibility.get)
+  React.useEffect(() => visibility.subscribe(() => setVisible(visibility.get())), [visibility])
+  return visible
+}
 
 /** Extract text from a block list (accepts both ContentBlock and AssistantBlock shapes). */
 function textOfBlocks(content: any): string {
@@ -398,8 +524,29 @@ export function apply(ctx: any): void {
     styleEl.remove()
   })
 
+  const visibility = createVisibility()
+
+  /** The sidebar-foot switch that shows and hides the rail. */
+  function RailToggle(props: any): React.ReactElement {
+    const visible = useVisible(visibility)
+    const wide = props.wide !== false
+    const action = visible ? '隐藏快捷导航' : '显示快捷导航'
+    return React.createElement('button', {
+      type: 'button',
+      className: 'tnv-row' + (wide ? '' : ' tnv-row--rail') + (visible ? '' : ' tnv-row--off'),
+      title: action,
+      'aria-label': action,
+      'aria-pressed': visible ? 'true' : 'false',
+      onClick: () => visibility.toggle(),
+    },
+      React.createElement(IconListPenOutline16, { size: 16 }),
+      wide ? React.createElement('span', { className: 'tnv-row-label' }, '快捷导航') : null,
+    )
+  }
+
   /** The rail component (created once per activation, so hook state is stable). */
   function TurnNav(props: any): React.ReactElement {
+    const visible = useVisible(visibility)
     const railRef = React.useRef<any>(null)
     const trackRef = React.useRef<any>(null)
     const slotRefs = React.useRef<any[]>([])
@@ -513,7 +660,7 @@ export function apply(ctx: any): void {
       card.style.visibility = 'visible'
     }, [hoverIndex])
 
-    if (!geom || turns.length === 0) return React.createElement('div', null)
+    if (!visible || !geom || turns.length === 0) return React.createElement('div', null)
 
     const jumpTo = (key: string, index: number) => {
       // Mark the clicked turn immediately, not waiting for the smooth scroll to
@@ -619,5 +766,10 @@ export function apply(ctx: any): void {
   ctx.slots.inject('shell.overlay', () => ctx.slots.register(
     { name: 'shell.overlay', id: 'turn-nav' },
     (props: any) => React.createElement(TurnNav, props),
+  ))
+
+  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register(
+    { name: 'sidebar.footer.action', id: 'turn-nav-toggle', order: TOGGLE_SLOT_ORDER },
+    (props: any) => React.createElement(RailToggle, props),
   ))
 }

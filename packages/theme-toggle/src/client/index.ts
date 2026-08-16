@@ -35,6 +35,16 @@ const SLOT_ORDER = 10
  * so a restyle upstream needs the same edit here.
  */
 const CSS = `
+  /*
+   * The sidebar foot lays its actions out in one nowrap flex row, so two
+   * full-width rows would overlap instead of stacking. Matched by the CSS
+   * module's local-name suffix because the harness hashes the prefix per build;
+   * every plugin seating a full-width row there declares the same rule, which
+   * is idempotent when more than one is installed.
+   */
+  [class*="_footerActions"] {
+    flex-wrap: wrap;
+  }
   .tt-btn {
     flex: none;
     display: flex;
