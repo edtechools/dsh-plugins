@@ -1,0 +1,6 @@
+# Bundle layer for dsh-plugin-theme-toggle. The row mounts the node half; the
+# browser half is discovered from this package's `dsh.client` declaration and
+# served at /plugins/<name>/client.js.
+- insert:
+    - id: ui-theme-toggle
+      name: dsh-plugin-theme-toggle

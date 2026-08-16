@@ -5,6 +5,7 @@
 | 包 | 面 | 作用 |
 |---|---|---|
 | [`packages/turn-nav`](packages/turn-nav) | node + 浏览器 | 对话区左缘的轮次导航条 |
+| [`packages/theme-toggle`](packages/theme-toggle) | node + 浏览器 | 侧边栏底部的明暗切换 |
 | [`packages/web-search`](packages/web-search) | node | 基于博查搜索 API 的 `bocha_web_search` 工具 |
 
 每个包本身就是一个 **bundle**（manifest 里声明 `dsh.bundle.patch`），所以 `dsh` 会自己把它的层追加进 profile。`dsh plugin --profile web remove dsh-plugin-turn-nav` 会同时移除依赖和它的层。profile 自己的 `cordis.patch.yml` 保持 `[]`，只用来放这台机器专属的行覆盖。
