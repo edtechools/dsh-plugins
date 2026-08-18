@@ -9,21 +9,23 @@
  * Edits stage rather than apply per keystroke — these are text and numbers,
  * where writing on every key would store values the user never chose.
  *
- * The API key itself is NOT here. The section names a credential *reference*;
- * the value lives with the credential provider, which the shipped card reaches
- * through the credentials RPC domain. Whether a plugin outside the harness can
- * reach that domain is unverified, so this card edits the reference and leaves
- * the secret where it already is.
+ * The API key is editable here but never readable: it is a `role('secret')`
+ * field, which the settings seam strips from every layer of every response. So
+ * it sits outside the staged form — there is nothing committed to diff a draft
+ * against — and the card reports only whether a key stands, from the
+ * descriptor's `secrets` list. Leaving it empty falls back to the credential
+ * reference, which is the path a deployment that keeps secrets out of the
+ * settings document keeps using.
  */
 
 import * as React from 'react'
 import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { COUNT_RANGE, DEFAULT_SETTINGS, type WebSearchSettings } from '../namespace.ts'
-import type { WebSearchStore } from './settings-store.ts'
+import type { ReadableField, WebSearchStore } from './settings-store.ts'
 
 /** One editable row. */
 interface FieldSpec {
-  field: keyof WebSearchSettings
+  field: ReadableField
   label: string
   hint: string
   kind: 'text' | 'number' | 'boolean'
@@ -31,13 +33,13 @@ interface FieldSpec {
 
 const FIELDS: readonly FieldSpec[] = [
   { field: 'endpoint', label: '接口地址', hint: '博查搜索 API 的 endpoint。', kind: 'text' },
-  { field: 'apiKeyRef', label: '密钥引用名', hint: '凭据提供方里的名字，密钥本身不存在这里。', kind: 'text' },
+  { field: 'apiKeyRef', label: '密钥引用名', hint: '没有直接填密钥时用它去凭据提供方取。', kind: 'text' },
   { field: 'defaultCount', label: '默认结果数', hint: `模型没指定 count 时用这个。${COUNT_RANGE.min}–${COUNT_RANGE.max}`, kind: 'number' },
   { field: 'defaultSummary', label: '默认返回摘要', hint: '模型没指定 summary 时用这个。', kind: 'boolean' },
 ]
 
 /** Staged value per field; booleans stay booleans, the rest stage as text. */
-type Draft = Record<keyof WebSearchSettings, string | boolean>
+type Draft = Record<ReadableField, string | boolean>
 
 /** Project the committed section into editable form. */
 function draftOf(value: WebSearchSettings): Draft {
@@ -78,6 +80,10 @@ export function SettingsCard({ store }: { store: WebSearchStore }): React.ReactE
   const [draft, setDraft] = React.useState<Draft>(() => draftOf(store.get()))
   const [saving, setSaving] = React.useState(false)
   const [failed, setFailed] = React.useState(false)
+  const [secretSet, setSecretSet] = React.useState(store.secretSet)
+  const [secretDraft, setSecretDraft] = React.useState('')
+  const [secretBusy, setSecretBusy] = React.useState(false)
+  const secretId = React.useId()
   const ids: Record<string, string> = {
     endpoint: React.useId(),
     apiKeyRef: React.useId(),
@@ -95,6 +101,7 @@ export function SettingsCard({ store }: { store: WebSearchStore }): React.ReactE
     setValue(next)
     setStatus(store.status())
     setOverridden(store.overridden())
+    setSecretSet(store.secretSet())
     if (!dirtyRef.current) setDraft(draftOf(next))
   }), [store])
 
@@ -146,6 +153,63 @@ export function SettingsCard({ store }: { store: WebSearchStore }): React.ReactE
           {status.phase === 'ready' && !status.writable
             ? <p className="wbs-readOnly" role="status">配置文件当前不可写。</p>
             : null}
+          {/*
+            The secret sits outside the staged form: there is no committed
+            value to diff against, because the seam never sends one back. It
+            therefore writes on its own button rather than on the card's save,
+            and reports only whether a key stands.
+          */}
+          <div className="wbs-field">
+            <div className="wbs-fieldHead">
+              <label className="wbs-label" htmlFor={secretId}>API 密钥</label>
+              <span className="wbs-secretState">
+                {secretSet === undefined ? '状态未知' : secretSet ? '已配置' : '未配置'}
+              </span>
+              <input
+                id={secretId}
+                className="wbs-input"
+                type="password"
+                autoComplete="off"
+                placeholder={secretSet === true ? '已存有密钥，填入可替换' : '直接填入密钥'}
+                value={secretDraft}
+                disabled={!status.writable || secretBusy}
+                onChange={(event) => { setSecretDraft(event.target.value) }}
+              />
+            </div>
+            <div className="wbs-secretActions">
+              <button
+                type="button"
+                className="wbs-save"
+                disabled={!status.writable || secretBusy || secretDraft === ''}
+                onClick={() => {
+                  setSecretBusy(true)
+                  store.writeSecret(secretDraft).finally(() => {
+                    setSecretBusy(false)
+                    setSecretDraft('')
+                  })
+                }}
+              >
+                {secretBusy ? '保存中' : '保存密钥'}
+              </button>
+              {secretSet === true ? (
+                <button
+                  type="button"
+                  className="wbs-discard"
+                  disabled={!status.writable || secretBusy}
+                  onClick={() => {
+                    setSecretBusy(true)
+                    store.writeSecret('').finally(() => { setSecretBusy(false) })
+                  }}
+                >
+                  清除
+                </button>
+              ) : null}
+            </div>
+            <p className="wbs-hint">
+              写进设置文档，永远不会被读回浏览器——所以这里只能告诉你有没有，不能显示是什么。
+              留空则改用下面的引用名去凭据提供方取。
+            </p>
+          </div>
           {FIELDS.map((spec, index) => (
             <div className="wbs-field" key={spec.field}>
               <div className="wbs-fieldHead">

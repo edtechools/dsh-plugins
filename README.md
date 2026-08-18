@@ -132,6 +132,10 @@ window.__ModuleLoader__.load({ id: "dsh-plugin-turn-nav", factory: (require) => 
 
   它的设置命名空间是 cordis.yml `Config` 的**子集**：`timeoutMs` 在 `defineTool` 时就被复制进工具定义，改它得把工具从注册表里摘下来再放回去，所以留在 cordis.yml 当部署旋钮——harness 自己的 web-search 卡也是这么划的界。
 
+  它还演示了**只写字段**：`apiKey` 声明成 `Schema.string().role('secret')`，设置层会把它从每个响应的每一层里剥掉，只在描述符的 `secrets` 列表里报告「有没有」。所以卡片能写、能清、能显示已配置，但读不回来——密钥输入框因此在暂存表单之外，用自己的按钮写入（没有已提交值可以 diff）。
+  
+  注意代价：`role('secret')` 的值**明文存在 `$DSH_HOME/settings.yaml` 里**。想让密钥完全不进配置文件，就别填这个字段，改用凭据引用。
+
 **rc.7 之前做不到。** rc.6 的 api-proxy 有一张 `exposedNamespaces()` 允许列表（模型 provider + `WEB_SETTINGS_NAMESPACES` + `PRODUCT_SETTINGS_NAMESPACES`，全部仓库内硬编码），`settings.describe` 按它过滤、写入返回 `settings-not-exposed`，仓库外插件加不进去。rc.7 把这三个符号整个删了。插槽 `settings.plugin.item` 本身 rc.6 就有，只是当时接不通。
 
 两个半边靠**同一个命名空间字符串**配对，tab 不需要知道它是什么意思：

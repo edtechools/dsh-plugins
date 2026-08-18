@@ -10,8 +10,13 @@ import { COUNT_RANGE, DEFAULT_SETTINGS, type WebSearchSettings } from './namespa
 export const WebSearchSettingsSchema: Schema<WebSearchSettings> = Schema.object({
   endpoint: Schema.string().default(DEFAULT_SETTINGS.endpoint)
     .description('Search API endpoint.'),
-  apiKeyRef: Schema.string().default(DEFAULT_SETTINGS.apiKeyRef)
-    .description('Credential reference holding the API key; the value never appears in configuration.'),
+  // Write-only by construction: `role('secret')` makes the settings seam strip
+  // this field from `value`, `base`, and `user` in every response, and report
+  // only whether a value stands through the descriptor's `secrets` list.
+  apiKey: Schema.string().role('secret')
+    .description('API key stored directly. Leave empty to resolve the credential reference below instead.'),
+  apiKeyRef: Schema.string().role('credential-ref').default(DEFAULT_SETTINGS.apiKeyRef)
+    .description('Credential reference used when no key is stored above; the value lives with the credential provider.'),
   defaultCount: Schema.number()
     .min(COUNT_RANGE.min).max(COUNT_RANGE.max)
     .default(DEFAULT_SETTINGS.defaultCount)

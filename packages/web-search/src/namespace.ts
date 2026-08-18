@@ -30,7 +30,14 @@ export const WEB_SEARCH_NAMESPACE = 'dsh-plugin-web-search'
 export interface WebSearchSettings {
   /** Search API endpoint. */
   endpoint: string
-  /** Credential reference holding the API key; the value itself never appears here. */
+  /**
+   * The API key itself, when the user pasted one instead of naming a
+   * reference. A `role('secret')` field: the settings seam strips it from
+   * every response in every layer, so the Host reads a value here that the
+   * browser can write but never read back. Absent means "use the reference".
+   */
+  apiKey?: string
+  /** Credential reference used when no literal key is stored. */
   apiKeyRef: string
   /** Result count used when the model omits `count`. */
   defaultCount: number

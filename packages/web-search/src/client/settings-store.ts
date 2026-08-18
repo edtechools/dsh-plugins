@@ -12,13 +12,16 @@
  * subdirectory, where a workspace dependency would not resolve.
  */
 
-import { DEFAULT_SETTINGS, type WebSearchSettings } from '../namespace.ts'
+import { DEFAULT_SETTINGS, WEB_SEARCH_NAMESPACE, type WebSearchSettings } from '../namespace.ts'
 
 /** What the durable section can currently do. */
 export interface SectionStatus {
   phase: 'loading' | 'ready' | 'unavailable'
   writable: boolean
 }
+
+/** Fields the browser can both read and write; the secret is neither. */
+export type ReadableField = 'endpoint' | 'apiKeyRef' | 'defaultCount' | 'defaultSummary'
 
 /** The configuration, plus which fields the user has overridden. */
 export interface WebSearchStore {
@@ -35,8 +38,21 @@ export interface WebSearchStore {
   save: (patch: Partial<WebSearchSettings>) => Promise<void>
   /** Drop one field's override so it re-inherits the cordis.yml base. */
   reset: (field: keyof WebSearchSettings) => Promise<void>
-  /** Bind the durable section; returns the unbind disposer. */
-  attach: (scope: any) => () => void
+  /**
+   * Whether a literal API key is stored; undefined until the Host has said.
+   * The value itself is unreadable by construction, so this is the only thing
+   * a card can honestly show about it.
+   */
+  secretSet: () => boolean | undefined
+  /** Store a literal API key, or clear the stored one with an empty string. */
+  writeSecret: (value: string) => Promise<void>
+  /**
+   * Bind the durable section; returns the unbind disposer.
+   * @param scope - the bound settings scope.
+   * @param api - the RPC face, for the one fact the scope does not carry
+   * (see {@link WebSearchStore.secretSet}).
+   */
+  attach: (scope: any, api: any) => () => void
 }
 
 const UNAVAILABLE: SectionStatus = { phase: 'unavailable', writable: false }
@@ -57,16 +73,48 @@ function pick<T>(raw: unknown, fallback: T): T {
   return typeof raw === typeof fallback ? raw as T : fallback
 }
 
+/** The write-only field's name, in one place because three call sites address it by path. */
+const SECRET_FIELD = 'apiKey'
+
 /** Build the store. Starts at the schema defaults and unattached. */
 export function createSettingsStore(): WebSearchStore {
   const listeners = new Set<() => void>()
   let value: WebSearchSettings = { ...DEFAULT_SETTINGS }
   let status: SectionStatus = UNAVAILABLE
   let overridden: ReadonlySet<keyof WebSearchSettings> = new Set()
+  let secretSet: boolean | undefined
   let scope: any
+  let api: any
   const notify = (): void => {
     for (const listener of listeners) listener()
   }
+
+  /**
+   * Ask the Host whether a literal key stands. The bound scope cannot answer:
+   * it drops the descriptor's `secrets` list, and the secret is stripped from
+   * the `user` layer it does keep, so nothing in a snapshot distinguishes
+   * "no key" from "a key the wire refuses to send".
+   */
+  const refreshSecret = async (): Promise<void> => {
+    if (api === undefined) return
+    let next: boolean | undefined
+    try {
+      const response = await api.settings.describe({})
+      const view = response?.result?.ok === true
+        ? response.result.value.namespaces.find((n: any) => n.ns === WEB_SEARCH_NAMESPACE)
+        : undefined
+      const slot = view?.secrets?.find((entry: any) => entry.path?.[0] === SECRET_FIELD)
+      next = slot?.set === true
+    } catch (_settingsDescribeFailure) {
+      // Unknown rather than false: claiming "no key" on a failed read would
+      // invite the user to paste one they already have.
+      next = undefined
+    }
+    if (next === secretSet) return
+    secretSet = next
+    notify()
+  }
+
   return {
     get: () => value,
     status: () => status,
@@ -90,8 +138,18 @@ export function createSettingsStore(): WebSearchStore {
       if (scope === undefined) return
       await scope.clear(field)
     },
-    attach: (bound) => {
+    secretSet: () => secretSet,
+    writeSecret: async (next) => {
+      if (scope === undefined) return
+      // Empty clears rather than storing a blank: an empty secret would read
+      // as "configured" to every surface that can only see whether one stands.
+      if (next === '') await scope.clear(SECRET_FIELD)
+      else await scope.set(SECRET_FIELD, next)
+      await refreshSecret()
+    },
+    attach: (bound, boundApi) => {
       scope = bound
+      api = boundApi
       const sync = (): void => {
         const snapshot = bound.getSnapshot()
         const section = snapshot.value
@@ -127,10 +185,13 @@ export function createSettingsStore(): WebSearchStore {
         notify()
       }
       sync()
+      void refreshSecret()
       const off = bound.subscribe(sync)
       return () => {
         off()
         scope = undefined
+        api = undefined
+        secretSet = undefined
         status = UNAVAILABLE
         notify()
       }

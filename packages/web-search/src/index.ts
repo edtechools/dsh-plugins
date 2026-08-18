@@ -2,9 +2,16 @@
  * `bocha_web_search` tool over the Bocha (博查) search API.
  *
  * Every deployment-varying value is a validated `Config` field rather than a
- * constant, and the API key is held as a credential *reference* — the
- * configuration names `BOCHA_API_KEY`, the value lives with the credential
- * provider, so no config file or patch layer ever carries the secret.
+ * constant, and cordis.yml supplies those as the settings namespace's
+ * composition `base`, so the settings card edits a layer above the deployment's
+ * own configuration rather than replacing it.
+ *
+ * Two ways to supply the key, checked in this order: a literal stored in the
+ * section's `role('secret')` field (what the card writes — the seam keeps it
+ * out of every response, so it can be set but never read back), and otherwise
+ * the credential *reference* the section names, whose value lives with the
+ * credential provider. A deployment that keeps secrets out of the settings
+ * document simply never sets the first.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -104,18 +111,26 @@ export function apply(ctx: Context, config: Config): void {
       // user just renamed in the settings card — reaches the very next search
       // without restarting the plugin.
       const settings = read()
-      const hit = await ctx.credentials.resolve(credentialRef(settings.apiKeyRef))
-      if (!hit) {
+      // A key stored in the section wins over the reference: the user typed it
+      // into this plugin's own card, which is a more specific statement than
+      // the reference the deployment configured. Both paths stay open — the
+      // reference is what a deployment that keeps secrets out of the settings
+      // document uses, and it is what remains when the stored key is cleared.
+      const key = settings.apiKey !== undefined && settings.apiKey !== ''
+        ? settings.apiKey
+        : (await ctx.credentials.resolve(credentialRef(settings.apiKeyRef)))?.value
+      if (key === undefined || key === '') {
         throw new Error(
-          `web-search: credential ${settings.apiKeyRef} is not configured — `
-          + `store it with the credential provider (for example in $DSH_HOME/.credentials.yaml)`,
+          `web-search: no API key — paste one into the plugin's settings card, `
+          + `or store credential ${settings.apiKeyRef} with the credential provider `
+          + `(for example in $DSH_HOME/.credentials.yaml)`,
         )
       }
 
       const response = await fetch(settings.endpoint, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${hit.value}`,
+          Authorization: `Bearer ${key}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({

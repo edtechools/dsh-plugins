@@ -196,6 +196,17 @@ const CSS = `
   .wbs-input:disabled {
     opacity: 0.5;
   }
+  .wbs-secretState {
+    flex: none;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--dsw-alias-label-tertiary);
+  }
+  .wbs-secretActions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
   .wbs-footer {
     display: flex;
     align-items: center;
@@ -275,7 +286,10 @@ export function apply(ctx: any): void {
   // still searches — it simply offers nothing to edit here.
   ctx.inject(['settingsScope', 'connection', 'remote'], (settingsCtx: any) => {
     settingsCtx.effect(
-      () => store.attach(settingsCtx.settingsScope.bind({ namespace: WEB_SEARCH_NAMESPACE })),
+      () => store.attach(
+        settingsCtx.settingsScope.bind({ namespace: WEB_SEARCH_NAMESPACE }),
+        settingsCtx.get("connection").api,
+      ),
       'web-search: configuration section',
     )
   })
