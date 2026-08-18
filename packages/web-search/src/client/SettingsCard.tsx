@@ -9,19 +9,22 @@
  * Edits stage rather than apply per keystroke — these are text and numbers,
  * where writing on every key would store values the user never chose.
  *
- * The API key is editable here but never readable: it is a `role('secret')`
- * field, which the settings seam strips from every layer of every response. So
- * it sits outside the staged form — there is nothing committed to diff a draft
- * against — and the card reports only whether a key stands, from the
- * descriptor's `secrets` list. Leaving it empty falls back to the credential
- * reference, which is the path a deployment that keeps secrets out of the
- * settings document keeps using.
+ * The API key is editable here but never readable: it never rides a response.
+ * It travels through `credentials.set`/`credentials.unset` under the reference
+ * the section names, exactly as the shipped model cards' key does
+ * (`llm-deepseek` declares only `apiKeyEnv`, never a literal). So it sits
+ * outside the staged form — there is nothing committed to diff a draft against
+ * — and the card reports only whether `credentials.describe` says one is
+ * configured.
  */
 
 import * as React from 'react'
 import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { DEFAULT_CONFIG, RANGES, type WebSearchConfig } from '../namespace.ts'
 import type { ReadableField, WebSearchStore } from './settings-store.ts'
+
+/** Where a Bocha account issues API keys — the one thing this card cannot supply. */
+const API_KEYS_URL = 'https://open.bochaai.com/api-keys'
 
 /** One editable row. */
 interface FieldSpec {
@@ -33,7 +36,7 @@ interface FieldSpec {
 
 const FIELDS: readonly FieldSpec[] = [
   { field: 'endpoint', label: '接口地址', hint: '博查搜索 API 的 endpoint。', kind: 'text' },
-  { field: 'apiKeyRef', label: '密钥引用名', hint: '没有直接填密钥时用它去凭据提供方取。', kind: 'text' },
+  { field: 'apiKeyRef', label: '密钥引用名', hint: '卡片上方填的密钥以这个名字存进凭据域。', kind: 'text' },
   { field: 'defaultCount', label: '默认结果数', hint: `模型没指定 count 时用这个。${RANGES.defaultCount.min}–${RANGES.defaultCount.max}`, kind: 'number' },
   { field: 'defaultSummary', label: '默认返回摘要', hint: '模型没指定 summary 时用这个。', kind: 'boolean' },
   { field: 'timeoutMs', label: '单次搜索超时', hint: `毫秒。改它会重新注册工具，所以不影响进行中的一轮。${RANGES.timeoutMs.min}–${RANGES.timeoutMs.max}`, kind: 'number' },
@@ -83,10 +86,12 @@ export function SettingsCard({ store }: { store: WebSearchStore }): React.ReactE
   const [draft, setDraft] = React.useState<Draft>(() => draftOf(store.get()))
   const [saving, setSaving] = React.useState(false)
   const [failed, setFailed] = React.useState(false)
-  const [secretSet, setSecretSet] = React.useState(store.secretSet)
-  const [secretDraft, setSecretDraft] = React.useState('')
-  const [secretBusy, setSecretBusy] = React.useState(false)
-  const secretId = React.useId()
+  const [keyConfigured, setKeyConfigured] = React.useState(store.keyConfigured)
+  const [keyWritable, setKeyWritable] = React.useState(store.keyWritable)
+  const [keySource, setKeySource] = React.useState(store.keySource)
+  const [keyDraft, setKeyDraft] = React.useState('')
+  const [keyBusy, setKeyBusy] = React.useState(false)
+  const keyId = React.useId()
   const ids: Record<string, string> = {
     endpoint: React.useId(),
     apiKeyRef: React.useId(),
@@ -105,7 +110,9 @@ export function SettingsCard({ store }: { store: WebSearchStore }): React.ReactE
     setValue(next)
     setStatus(store.status())
     setOverridden(store.overridden())
-    setSecretSet(store.secretSet())
+    setKeyConfigured(store.keyConfigured())
+    setKeyWritable(store.keyWritable())
+    setKeySource(store.keySource())
     if (!dirtyRef.current) setDraft(draftOf(next))
   }), [store])
 
@@ -158,51 +165,55 @@ export function SettingsCard({ store }: { store: WebSearchStore }): React.ReactE
             ? <p className="wbs-readOnly" role="status">配置文件当前不可写。</p>
             : null}
           {/*
-            The secret sits outside the staged form: there is no committed
-            value to diff against, because the seam never sends one back. It
-            therefore writes on its own button rather than on the card's save,
-            and reports only whether a key stands.
+            The key sits outside the staged form: it never rides a response, so
+            there is no committed value to diff against. It therefore writes on
+            its own button — through the credentials domain addressed by the
+            section's reference — and reports only whether one is configured.
           */}
           <div className="wbs-field">
             <div className="wbs-fieldHead">
-              <label className="wbs-label" htmlFor={secretId}>API 密钥</label>
+              <label className="wbs-label" htmlFor={keyId}>API 密钥</label>
               <span className="wbs-secretState">
-                {secretSet === undefined ? '状态未知' : secretSet ? '已配置' : '未配置'}
+                {keyConfigured === undefined
+                  ? '状态未知'
+                  : keyConfigured
+                    ? (keySource === 'env' ? '已配置 · 环境变量' : '已配置')
+                    : '未配置'}
               </span>
               <input
-                id={secretId}
+                id={keyId}
                 className="wbs-input"
                 type="password"
                 autoComplete="off"
-                placeholder={secretSet === true ? '已存有密钥，填入可替换' : '直接填入密钥'}
-                value={secretDraft}
-                disabled={!status.writable || secretBusy}
-                onChange={(event) => { setSecretDraft(event.target.value) }}
+                placeholder={keyConfigured === true ? '已配置，填入可替换' : '直接填入密钥'}
+                value={keyDraft}
+                disabled={keyBusy || keyWritable === false}
+                onChange={(event) => { setKeyDraft(event.target.value) }}
               />
             </div>
             <div className="wbs-secretActions">
               <button
                 type="button"
                 className="wbs-save"
-                disabled={!status.writable || secretBusy || secretDraft === ''}
+                disabled={keyBusy || keyWritable === false || keyDraft === ''}
                 onClick={() => {
-                  setSecretBusy(true)
-                  store.writeSecret(secretDraft).finally(() => {
-                    setSecretBusy(false)
-                    setSecretDraft('')
+                  setKeyBusy(true)
+                  store.writeKey(keyDraft).finally(() => {
+                    setKeyBusy(false)
+                    setKeyDraft('')
                   })
                 }}
               >
-                {secretBusy ? '保存中' : '保存密钥'}
+                {keyBusy ? '保存中' : '保存密钥'}
               </button>
-              {secretSet === true ? (
+              {keyConfigured === true ? (
                 <button
                   type="button"
                   className="wbs-discard"
-                  disabled={!status.writable || secretBusy}
+                  disabled={keyBusy || keyWritable === false}
                   onClick={() => {
-                    setSecretBusy(true)
-                    store.writeSecret('').finally(() => { setSecretBusy(false) })
+                    setKeyBusy(true)
+                    store.writeKey('').finally(() => { setKeyBusy(false) })
                   }}
                 >
                   清除
@@ -210,8 +221,20 @@ export function SettingsCard({ store }: { store: WebSearchStore }): React.ReactE
               ) : null}
             </div>
             <p className="wbs-hint">
-              写进设置文档，永远不会被读回浏览器——所以这里只能告诉你有没有，不能显示是什么。
-              留空则改用下面的引用名去凭据提供方取。
+              {keyWritable === false
+                ? '当前值来自启动 dsh 时的环境变量，这一层本进程改不了——要在这里管理密钥，先从环境里去掉它。'
+                : '通过「密钥引用名」存进凭据域，永远不会被读回浏览器——所以这里只能告诉你有没有，不能显示是什么。'}
+              {' '}
+              {/* The one thing this card cannot supply itself. Opened in a new
+                  context so a half-filled form is not lost to a navigation. */}
+              <a
+                className="wbs-link"
+                href={API_KEYS_URL}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                获取密钥 ↗
+              </a>
             </p>
           </div>
           {FIELDS.map((spec, index) => (

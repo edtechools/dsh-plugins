@@ -152,11 +152,11 @@ cordis.yml                       ~/.dsh/profiles/<name>/cordis.patch.yml
 - **`turn-nav`：即时生效。** 布尔开关点一下就写，字数用下拉（每次变更写入完整值）。都没有中间态。
 - **`quote-select` / `web-search`：暂存 + 保存/放弃。** 文本和数字按键即写是错的（在 `600` 里改一位会先写出 `6`）。内置那三张卡都做暂存，正是这个原因。
 
-**密钥用 `role('secret')`**，和 `web-search-deepseek`、`llm-deepseek` 一致：设置层把它从每个响应的每一层剥掉，只在描述符的 `secrets` 列表里报告「有没有」。所以卡片能写、能清、能显示已配置，但读不回来——密钥控件因此在暂存表单之外，用自己的按钮写。
+**密钥不是设置字段。** 这是 `llm-deepseek` 一开始就立下的形状——它的 `Config` 只有 `apiKeyEnv`（`role('credential-ref')`），从来没有 `apiKey` 字段。`web-search` 现在对齐：section 里只放 `apiKeyRef`（`role('credential-ref')`），字面密钥只走 `credentials.set`/`credentials.unset`，按这个引用名存进凭据域，`settings.yaml` 永远不接它。设置卡的密钥控件因此落在暂存表单之外——没有 committed 值可以 diff 草稿——用自己的按钮写，状态只从 `credentials.describe` 报回的「有没有」合成。
 
-配一条 `role('credential-ref')` 的引用名做另一条路：**字面密钥优先，为空才去解析引用**。引用值由凭据 provider 找，顺序是 进程环境变量 → `~/.dsh/.credentials.yaml` → 项目 `.env` → 用户 `.env`。
+引用值由凭据 provider 找，顺序是 进程环境变量 → `~/.dsh/.credentials.yaml` → 项目 `.env` → 用户 `.env`。把 cordis.patch.yml 里的 `apiKeyRef` 改名就能让搜索改用另一个凭据，不用碰代码。
 
-注意代价：`role('secret')` 的值**明文存在 `settings.yaml` 里**。"只写"指的是不经 wire 回传浏览器，不是加密存储。要密钥完全不进配置文件，就别填这个字段。
+「明文存在 `settings.yaml`」这个代价因此消失——卡片填的密钥进的是独立的 `~/.dsh/.credentials.yaml`（600 权限），不会被编辑 `settings.yaml` 的人接住。要它连这个文件都不进，从启动环境变量里给即可——那是凭据 provider 的第一层来源。
 
 **rc.7 之前做不到。** rc.6 的 api-proxy 有一张 `exposedNamespaces()` 允许列表，`describe` 按它过滤、写入返回 `settings-not-exposed`，仓库外插件加不进去。rc.7 把那几个符号整个删了。插槽 `settings.plugin.item` 本身 rc.6 就有，只是当时接不通。
 

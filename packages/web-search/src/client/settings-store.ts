@@ -7,6 +7,13 @@
  * mirror is what lets the card mount at the defaults and adopt the stored
  * section when it lands.
  *
+ * The API key is NOT held in this section. The card addresses it through the
+ * credentials domain by the reference the section names — `credentials.set`
+ * writes it, `credentials.unset` clears it, and `credentials.describe` reports
+ * whether one is configured. So the store reads only booleans about the key,
+ * never the literal — exactly the split the shipped model cards' key uses, and
+ * the reason `llm-deepseek` declares only `apiKeyEnv`.
+ *
  * Deliberately not shared with the sibling plugins that carry a near-identical
  * store: a package here is installable on its own from a repository
  * subdirectory, where a workspace dependency would not resolve.
@@ -20,8 +27,25 @@ export interface SectionStatus {
   writable: boolean
 }
 
-/** Fields the browser can both read and write; the secret is neither. */
+/** Fields the browser can both read and write; the key is neither. */
 export type ReadableField = 'endpoint' | 'apiKeyRef' | 'defaultCount' | 'defaultSummary' | 'timeoutMs'
+
+/** What the credentials domain last reported about the referenced key. */
+export interface CredentialState {
+  /** Reference this answer describes; a stale response for another one is dropped. */
+  ref: string
+  /** Whether any layer supplies a value for it. undefined until the domain answers. */
+  configured: boolean | undefined
+  /** Whether `credentials.set`/`credentials.unset` can affect it; undefined until the domain answers. */
+  writable: boolean | undefined
+  /**
+   * Which layer supplies the value, when one does. Kept because it is the only
+   * thing that explains an unwritable key: the process environment is the one
+   * layer this process cannot edit, and a control disabled without saying so
+   * reads as broken rather than as inherited.
+   */
+  source: string | undefined
+}
 
 /** The configuration, plus which fields the user has overridden. */
 export interface WebSearchStore {
@@ -39,18 +63,39 @@ export interface WebSearchStore {
   /** Drop one field's override so it re-inherits the cordis.yml base. */
   reset: (field: keyof WebSearchConfig) => Promise<void>
   /**
-   * Whether a literal API key is stored; undefined until the Host has said.
-   * The value itself is unreadable by construction, so this is the only thing
-   * a card can honestly show about it.
+   * Whether the Host reports a credential configured for the section's
+   * reference; undefined until the credentials domain has answered. The value
+   * itself is unreadable by construction, so this is the only thing a card can
+   * honestly show about it.
    */
-  secretSet: () => boolean | undefined
-  /** Store a literal API key, or clear the stored one with an empty string. */
-  writeSecret: (value: string) => Promise<void>
+  keyConfigured: () => boolean | undefined
+  /**
+   * Whether `credentials.set`/`credentials.unset` can affect the section's
+   * reference; undefined until the credentials domain has answered. An unknown
+   * answer is treated as writable so the control stays usable and the Host is
+   * what refuses — never the card.
+   */
+  keyWritable: () => boolean | undefined
+  /** Which layer supplies the key ('env', 'file', a dotenv layer); undefined when none does. */
+  keySource: () => string | undefined
+  /**
+   * Re-read the credentials domain. Called on the Host's own
+   * `credentials/updated` notification, so a key stored from another surface —
+   * the Models page addresses the same references — is reflected here without
+   * anything in this plugin's section changing.
+   */
+  refreshKey: () => Promise<void>
+  /**
+   * Store a literal API key under the section's reference, or clear the stored
+   * one with an empty string (which routes to `credentials.unset`). The value
+   * never touches the settings document.
+   */
+  writeKey: (value: string) => Promise<void>
   /**
    * Bind the durable section; returns the unbind disposer.
    * @param scope - the bound settings scope.
-   * @param api - the RPC face, for the one fact the scope does not carry
-   * (see {@link WebSearchStore.secretSet}).
+   * @param api - the RPC face, used to reach the credentials domain for the
+   * one fact the scope does not carry (see {@link WebSearchStore.keyConfigured}).
    */
   attach: (scope: any, api: any) => () => void
 }
@@ -73,45 +118,62 @@ function pick<T>(raw: unknown, fallback: T): T {
   return typeof raw === typeof fallback ? raw as T : fallback
 }
 
-/** The write-only field's name, in one place because three call sites address it by path. */
-const SECRET_FIELD = 'apiKey'
-
 /** Build the store. Starts at the schema defaults and unattached. */
 export function createSettingsStore(): WebSearchStore {
   const listeners = new Set<() => void>()
   let value: WebSearchConfig = { ...DEFAULT_CONFIG }
   let status: SectionStatus = UNAVAILABLE
   let overridden: ReadonlySet<keyof WebSearchConfig> = new Set()
-  let secretSet: boolean | undefined
+  let credential: CredentialState = { ref: '', configured: undefined, writable: undefined, source: undefined }
   let scope: any
   let api: any
   const notify = (): void => {
     for (const listener of listeners) listener()
   }
 
+  /** The credential reference the section currently names. */
+  const refOf = (): string => value.apiKeyRef
+
   /**
-   * Ask the Host whether a literal key stands. The bound scope cannot answer:
-   * it drops the descriptor's `secrets` list, and the secret is stripped from
-   * the `user` layer it does keep, so nothing in a snapshot distinguishes
-   * "no key" from "a key the wire refuses to send".
+   * Ask the credentials domain about the reference the section currently names.
+   *
+   * The answer is stored with the reference it describes: `apiKeyRef` can
+   * change between the request and its response, and two reads can settle out
+   * of order, so a response is published only while it still answers for the
+   * reference in force.
    */
-  const refreshSecret = async (): Promise<void> => {
+  const refreshKey = async (): Promise<void> => {
     if (api === undefined) return
-    let next: boolean | undefined
-    try {
-      const response = await api.settings.describe({})
-      const view = response?.result?.ok === true
-        ? response.result.value.namespaces.find((n: any) => n.ns === WEB_SEARCH_NAMESPACE)
-        : undefined
-      const slot = view?.secrets?.find((entry: any) => entry.path?.[0] === SECRET_FIELD)
-      next = slot?.set === true
-    } catch (_settingsDescribeFailure) {
-      // Unknown rather than false: claiming "no key" on a failed read would
-      // invite the user to paste one they already have.
-      next = undefined
+    const ref = refOf()
+    if (ref !== credential.ref) {
+      // A new reference knows nothing yet; keeping the old answer would claim
+      // the key is configured under a name nobody has checked.
+      const wasKnown = credential.configured !== undefined || credential.writable !== undefined
+      credential = { ref, configured: undefined, writable: undefined, source: undefined }
+      if (wasKnown) notify()
     }
-    if (next === secretSet) return
-    secretSet = next
+    let response: any
+    try {
+      response = await api.credentials.describe({ refs: [ref] })
+    } catch (_credentialReadFailure) {
+      // The card stays usable without this: the key control simply reports the
+      // last state it knew, and a write still reaches the Host.
+      return
+    }
+    if (response?.result?.ok !== true || ref !== refOf()) return
+    const view = response.result.value.credentials[ref]
+    const next: CredentialState = {
+      ref,
+      configured: view?.configured ?? false,
+      // An unknown reference is treated as writable: the control stays usable
+      // and the Host is what refuses, rather than the card guessing a refusal.
+      writable: view?.writable ?? true,
+      source: typeof view?.source === 'string' ? view.source : undefined,
+    }
+    if (next.configured === credential.configured
+      && next.writable === credential.writable
+      && next.source === credential.source) return
+    credential = next
     notify()
   }
 
@@ -138,14 +200,24 @@ export function createSettingsStore(): WebSearchStore {
       if (scope === undefined) return
       await scope.clear(field)
     },
-    secretSet: () => secretSet,
-    writeSecret: async (next) => {
-      if (scope === undefined) return
-      // Empty clears rather than storing a blank: an empty secret would read
-      // as "configured" to every surface that can only see whether one stands.
-      if (next === '') await scope.clear(SECRET_FIELD)
-      else await scope.set(SECRET_FIELD, next)
-      await refreshSecret()
+    keyConfigured: () => credential.configured,
+    keyWritable: () => credential.writable,
+    keySource: () => credential.source,
+    refreshKey: () => refreshKey(),
+    writeKey: async (next) => {
+      if (api === undefined) return
+      const ref = refOf()
+      try {
+        // Empty clears rather than stores a blank; `credentials.set` would reject
+        // one anyway. Clearing routes to `credentials.unset`, which is the only
+        // way to remove the value from the credential plane.
+        if (next === '') await api.credentials.unset({ ref })
+        else await api.credentials.set({ ref, value: next })
+      } catch (_credentialWriteFailure) {
+        // Refusals surface through the re-read below: the Host is the only
+        // authority on whether the key now exists.
+      }
+      await refreshKey()
     },
     attach: (bound, boundApi) => {
       scope = bound
@@ -179,20 +251,26 @@ export function createSettingsStore(): WebSearchStore {
           || nextStatus.writable !== status.writable
           || nextOverridden.size !== overridden.size
           || [...nextOverridden].some(field => !overridden.has(field))
-        if (!changed) return
-        value = nextValue
-        status = nextStatus
-        overridden = nextOverridden
-        notify()
+        if (changed) {
+          value = nextValue
+          status = nextStatus
+          overridden = nextOverridden
+          notify()
+        }
+        // Only when the reference moves. A credential changed from elsewhere
+        // arrives through the Host's `credentials/updated` notification
+        // instead, so probing on every unrelated section change would be one
+        // wire call per keystroke-sized edit for an answer that cannot have
+        // changed.
+        if (credential.ref !== value.apiKeyRef) void refreshKey()
       }
       sync()
-      void refreshSecret()
       const off = bound.subscribe(sync)
       return () => {
         off()
         scope = undefined
         api = undefined
-        secretSet = undefined
+        credential = { ref: '', configured: undefined, writable: undefined, source: undefined }
         status = UNAVAILABLE
         notify()
       }

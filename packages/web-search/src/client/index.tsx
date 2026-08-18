@@ -156,6 +156,19 @@ const CSS = `
     line-height: 1.5;
     color: var(--dsw-alias-label-tertiary);
   }
+  .wbs-link {
+    color: var(--dsw-alias-state-business-primary);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .wbs-link:hover {
+    text-decoration: underline;
+  }
+  .wbs-link:focus-visible {
+    outline: 2px solid var(--dsw-alias-brand-primary);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
   .wbs-reset {
     flex: none;
     border: none;
@@ -288,9 +301,18 @@ export function apply(ctx: any): void {
     settingsCtx.effect(
       () => store.attach(
         settingsCtx.settingsScope.bind({ namespace: WEB_SEARCH_NAMESPACE }),
-        settingsCtx.get("connection").api,
+        settingsCtx.get('connection').api,
       ),
       'web-search: configuration section',
+    )
+    // The key is not part of the section, so nothing in the settings scope
+    // reports a change to it. The Host announces one here — and it announces
+    // changes made from anywhere, including the Models page, which addresses
+    // the same references, and a hand edit to the credentials document, which
+    // its provider watches.
+    settingsCtx.effect(
+      () => settingsCtx.remote.$on('credentials/updated', () => { void store.refreshKey() }),
+      'web-search: credential invalidations',
     )
   })
 

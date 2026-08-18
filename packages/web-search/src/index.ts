@@ -8,12 +8,12 @@
  * schema default → cordis.yml → the user's settings document, and a deployment
  * with no settings provider keeps running exactly as composed.
  *
- * Two ways to supply the key, checked in this order: a literal in the
- * `role('secret')` field (what the card writes — the seam keeps it out of every
- * response, so it can be set but never read back), and otherwise the credential
- * *reference* the section names, whose value lives with the credential
- * provider. A deployment that keeps secrets out of the settings document simply
- * never sets the first.
+ * The API key is NOT one of those fields. The section names a credential
+ * *reference*; the value lives in the credential plane, and the settings card
+ * writes it there through `credentials.set` — the same split the shipped model
+ * cards use, and the reason `llm-deepseek` declares only `apiKeyEnv`. Keeping
+ * it out of the settings document is what keeps it out of a 644 file the user
+ * opens in a text editor.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -44,13 +44,8 @@ const NS = settingsNamespace(WEB_SEARCH_NAMESPACE)
 export const Config: Schema<Config> = Schema.object({
   endpoint: Schema.string().default(DEFAULT_CONFIG.endpoint)
     .description('Search API endpoint.'),
-  // Write-only by construction: `role('secret')` makes the settings seam strip
-  // this field from `value`, `base`, and `user` in every response, and report
-  // only whether a value stands through the descriptor's `secrets` list.
-  apiKey: Schema.string().role('secret')
-    .description('API key stored directly. Leave empty to resolve the credential reference instead.'),
   apiKeyRef: Schema.string().role('credential-ref').default(DEFAULT_CONFIG.apiKeyRef)
-    .description('Credential reference used when no key is stored above; the value lives with the credential provider.'),
+    .description('Credential reference naming this plugin\'s API key; the value lives with the credential provider and the card writes it through credentials.set.'),
   defaultCount: Schema.number()
     .min(RANGES.defaultCount.min).max(RANGES.defaultCount.max).default(DEFAULT_CONFIG.defaultCount)
     .description('Result count used when the model omits `count`.'),
@@ -123,19 +118,15 @@ export function apply(ctx: Context, config: Config): void {
         // Read per call, never captured: an endpoint or key edited in the
         // settings card reaches the very next search.
         const settings = current()
-        // A key stored in the section wins over the reference: the user typed
-        // it into this plugin's own card, which is a more specific statement
-        // than the reference the deployment configured. Both paths stay open —
-        // the reference is what a deployment that keeps secrets out of the
-        // settings document uses, and what remains once the literal is cleared.
-        const key = settings.apiKey !== undefined && settings.apiKey !== ''
-          ? settings.apiKey
-          : (await ctx.credentials.resolve(credentialRef(settings.apiKeyRef)))?.value
+        // The key is never a settings field: the section names a reference and
+        // the credential plane holds the value, which is where the settings
+        // card writes it too. Resolved per call, so a rotated key — or one the
+        // card just stored — reaches the very next search.
+        const key = (await ctx.credentials.resolve(credentialRef(settings.apiKeyRef)))?.value
         if (key === undefined || key === '') {
           throw new Error(
-            `web-search: no API key — paste one into the plugin's settings card, `
-            + `or store credential ${settings.apiKeyRef} with the credential provider `
-            + `(for example in $DSH_HOME/.credentials.yaml)`,
+            `web-search: credential ${settings.apiKeyRef} is not configured — `
+            + `store it from the plugin's settings card, or in $DSH_HOME/.credentials.yaml`,
           )
         }
 

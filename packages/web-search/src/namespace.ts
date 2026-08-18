@@ -26,12 +26,10 @@ export interface WebSearchConfig {
   /** Search API endpoint. */
   endpoint: string
   /**
-   * The API key itself. A `role('secret')` field: the settings seam strips it
-   * from every layer of every response, so the Host reads a value the browser
-   * can write but never read back. Absent means "resolve {@link apiKeyRef}".
+   * Credential reference naming this plugin's API key. The key itself is
+   * never a settings field: it lives in the credential store, exactly as the
+   * DeepSeek provider's does (`llm-deepseek` declares only `apiKeyEnv`).
    */
-  apiKey?: string
-  /** Credential reference used when no literal key is stored. */
   apiKeyRef: string
   /** Result count used when the model omits `count`. */
   defaultCount: number
