@@ -5,7 +5,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "check": "node scripts/check.mjs",
-    "typecheck": "tsc -b packages/turn-nav packages/web-search"
+    "typecheck": "tsc -b packages/quote-select packages/theme-toggle packages/turn-nav packages/web-search"
   },
   "devDependencies": {
     "tsdown": "^0.22.2",

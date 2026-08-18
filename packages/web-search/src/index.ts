@@ -9,7 +9,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, type JsonValue } from '@deepseek-ai/dsh-tools'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 
 export const name = 'web-search-tool'
@@ -89,7 +89,17 @@ export function apply(ctx: Context, config: Config): void {
         const detail = body === '' ? '' : ` — ${body.slice(0, ERROR_BODY_LIMIT)}`
         throw new Error(`web-search: ${response.status} ${response.statusText}${detail}`)
       }
-      return await response.json()
+
+      // Wire boundary: the declared output schema promises the model a JSON
+      // object, and a 200 from someone else's API is not evidence of one. The
+      // cast that follows the check is sound because the value came from
+      // JSON.parse — every member is a JsonValue by construction, which is the
+      // part a runtime check could only re-derive at the cost of a deep walk.
+      const payload: unknown = await response.json()
+      if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+        throw new Error(`web-search: ${config.endpoint} answered with ${payload === null ? 'null' : typeof payload}, expected a JSON object`)
+      }
+      return payload as Record<string, JsonValue>
     },
   }))
 }

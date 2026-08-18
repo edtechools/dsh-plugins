@@ -4,6 +4,9 @@
     "lib": ["es2024"],
     "module": "nodenext",
     "moduleResolution": "nodenext",
+    // Node globals only — this half runs in the host process. `dom` would also
+    // resolve `fetch`, but by handing a node plugin `document` and `window`.
+    "types": ["node"],
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
