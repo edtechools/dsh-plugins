@@ -25,27 +25,20 @@ dsh --profile web --dump-config    # 每个 bundle 一个带标签的层
 
 ## 装法二：从 GitHub
 
-插件稳定之后用这个。**pin commit**，否则仓库下一次 push 就能悄悄改变装机时执行的代码。
+插件稳定之后用这个，一条命令：
 
 ```sh
-dsh plugin --profile web add "github:edtechools/dsh-plugins#<sha>&path:/packages/turn-nav"
+dsh plugin --profile web add "github:edtechools/dsh-plugins#main&path:/packages/turn-nav"
 ```
 
-子目录参数在**有 sha 时写 `&path:`**（`#` 已经被 sha 占了），没有 sha 时才是 `#path:/packages/turn-nav`。
+子目录参数在**有 sha 时写 `&path:`**（`#` 已经被 sha 占了），没有 sha 时才是 `#path:/packages/turn-nav`。一次装一个包。
 
-第一次一定会失败：pnpm 拒绝执行 git 依赖的 `prepare` 脚本，直到显式放行。按报错里打印的 key 加进 profile 的 `pnpm-workspace.yaml` 再重试：
+**建议 pin sha 而不是 `#main`**，否则仓库下一次 push 就能悄悄改变你装着的代码。
 
-```yaml
-allowBuilds:
-  "dsh-plugin-turn-nav@https://codeload.github.com/edtechools/dsh-plugins/tar.gz/<sha>#path:/packages/turn-nav": true
-```
+装的人不需要任何额外配置——没有 `allowBuilds` 放行，没有 peer 依赖的 404。这靠三件事，改动它们之前先读[产物入库](#产物入库为什么-lib-在版本库里)：
 
-两个坑：
-
-- key **不是包名**，是内嵌了 sha 的完整 URL。所以**每次 pin 新 sha，都要同步换掉这条 key**，否则又被拦——升级插件时最容易忘的一步。
-- key 里有 `#`，**YAML 必须加引号**，否则 `#` 之后被当成注释，放行静默失效。
-
-放行的分量要清楚：**这是授权该包在你机器上装机时执行代码**，在 agent 的沙箱之外。不想要这个授权就发构建好的产物——`pnpm publish`（`lib/` 在发布时构建）或 `pnpm pack` 出 tarball，两种都不需要任何构建权限。
+- `lib/` 在版本库里，且**没有 `prepare` 脚本** —— 安装时不执行任何构建脚本，pnpm 的 `allowBuilds` 门就不会触发
+- 每条 peer 都标了 `peerDependenciesMeta: optional` —— pnpm 不会去 npm 上找 `@deepseek-ai/dsh-*`（其中 `dsh-tools` 会拉未发布的 `dsh-type-meta`，必然 404）
 
 ## 加一个新插件
 
@@ -56,7 +49,7 @@ allowBuilds:
 
 从最接近的现有包复制改，别从零写——那两份构建配置里编码了一些不明显的约束。
 
-`pnpm check` 把下面两节约束里那些**不出声的失败**变成显式报错：能否在 profile 上下文中导入、闭包工厂协议是否完整、产物 id 与 `BUNDLE_ID` 是否等于包名、`react` 是否仍为 external、产物里每个 `require` 是否都在平台表内、`cordis.patch.yml` 引用名是否与包名一致、平台表是否与 harness 同步。它只读不写，任一项不过就以非零码退出。
+`pnpm check` 把下面两节约束里那些**不出声的失败**变成显式报错：能否在 profile 上下文中导入、闭包工厂协议是否完整、产物 id 与 `BUNDLE_ID` 是否等于包名、`react` 是否仍为 external、产物里每个 `require` 是否都在平台表内、`cordis.patch.yml` 引用名是否与包名一致、平台表是否与 harness 同步、以及**提交的产物是否与源一致**（见[产物入库](#产物入库为什么-lib-在版本库里)）。除最后一项会重新构建外都是只读的；任一项不过就以非零码退出。
 
 ## 约束一（仅限本地开发）：`link:` 够不着扁平兜底目录
 
@@ -181,6 +174,20 @@ curl -s -X POST http://127.0.0.1:3080/api/settings.describe \
 
 - **turn-nav 的轮次标记** 存 `localStorage`（按会话分组、按会话列表剪枝）：它是每会话的数据且会增长，而 `settings.yaml` 是你会用编辑器打开的文件。代价是换浏览器不跟随；宿主目前没有会话级注解存储可写。
 - **quote-select 的引用** 编码在**草稿文本**里，随会话草稿走。设置里只有那三个上限。
+
+## 产物入库：为什么 `lib/` 在版本库里
+
+`packages/*/lib/*.js` 是**提交进仓库的构建产物**，`.map` 不提交（只对本地调试有用，而且占体积的大头）。
+
+这是为了[装法二](#装法二从-github)能一条命令装上：git 安装时仓库里就有能直接跑的 JS，不需要执行构建脚本，也就绕开了 pnpm 对 git 依赖 `prepare` 的放行门。`dsh-at-file` 和 `modlens` 都是这么做的。
+
+代价有三条：
+
+1. **忘记重新构建就提交 = 静默发布旧代码。** 源码看着是对的，别人装到的是上一版行为。`pnpm check` 最后一步专门防这个：重新构建后比对 `git diff`，不一致就报错。它可靠是因为**构建可复现**——同一份源两次构建产物字节相同。
+2. **diff 噪音。** 改一行源码会带出几十 KB 的产物 diff，`git log -p` 和 review 会被淹。不提交 `.map` 已经砍掉了大半。
+3. **合并冲突。** 两个分支改同一个插件，`lib/` 必然冲突且手工解不了。套路固定：`git checkout --ours packages/<name>/lib && pnpm --filter <name> build`。
+
+所以**提交前跑一次 `pnpm check`**，别只跑 `pnpm build`。
 
 ## 升级风险
 

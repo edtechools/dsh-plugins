@@ -23,8 +23,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown",
-    "prepare": "tsdown"
+    "build": "tsdown"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
@@ -43,5 +42,22 @@
     "react-dom": "^18.2.0",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-settings": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
   }
 }

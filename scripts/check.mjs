@@ -4,7 +4,16 @@
  * starts normally and logs nothing. See the README sections these mirror:
  * the local-development resolution constraint and the browser-bundle rules.
  *
- * Every check is read-only. Exits non-zero if any check fails.
+ * Every check is read-only except the artifact-freshness one, which rebuilds
+ * in place: `lib/` is committed here (that is what lets a git install run no
+ * build script, and so skip pnpm's `allowBuilds` gate), which makes "forgot to
+ * rebuild before committing" a silent way to ship stale code. Rebuilding and
+ * diffing is the only thing that catches it, and it is sound because the build
+ * is reproducible — the same source produces byte-identical output. On a clean
+ * tree a pass leaves the tree clean; a failure leaves the correct artifact
+ * staged for you to commit.
+ *
+ * Exits non-zero if any check fails.
  */
 
 import { execFile } from 'node:child_process'
@@ -202,6 +211,27 @@ if (clientTables.length === 0) {
       }
     }
   }
+}
+
+// 6. Committed artifacts must match the committed source. Last, because it is
+//    the only step that writes, and because a stale artifact makes every check
+//    above describe a build nobody will install.
+console.log('[1m产物与源一致[22m')
+try {
+  await run('git', ['diff', '--quiet', '--', 'packages'], { cwd: REPO })
+  await run('pnpm', ['-r', 'build'], { cwd: REPO })
+  try {
+    await run('git', ['diff', '--quiet', '--', 'packages'], { cwd: REPO })
+    pass('提交的 lib/ 与源一致')
+  } catch {
+    const { stdout } = await run('git', ['diff', '--name-only', '--', 'packages'], { cwd: REPO })
+    fail('提交的 lib/ 与源一致', `重新构建后这些产物变了，说明提交前忘了构建：\n${stdout.trim()}\n现在它们已经是正确的，提交即可。`)
+  }
+} catch (error) {
+  // A dirty tree cannot answer this question: the diff would report the work in
+  // progress rather than a stale artifact.
+  if (String(error.message ?? '').includes('git')) skip('提交的 lib/ 与源一致', '工作区有未提交改动')
+  else fail('提交的 lib/ 与源一致', error.stdout?.trim() || error.message)
 }
 
 console.log('')
