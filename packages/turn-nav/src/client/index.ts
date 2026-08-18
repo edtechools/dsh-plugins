@@ -20,24 +20,27 @@
  * `[data-conversation-scroll]` is the chat scrollport and
  * `[data-chat-anchor-key]` marks each rendered node.
  *
- * A switch in the sidebar foot (`sidebar.footer.action`) shows and hides the
- * rail. It lives here rather than in its own plugin because the state it owns
- * is this plugin's own visibility — no seam between two plugins to define.
+ * Two preferences, both durable in the Host settings document under this
+ * package's namespace and edited from either of two places that never
+ * disagree: a switch in the sidebar foot (`sidebar.footer.action`) shows and
+ * hides the rail, and the plugin's own card (`settings.plugin.item`) governs
+ * that switch as well as the rail. They live here rather than in their own
+ * plugin because the state they own is this plugin's own — no seam between two
+ * plugins to define.
  */
 
 import * as React from 'react'
 // A platform module, so this stays an external the shell's frozen table answers.
-import { IconListPenOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutline14, IconListPenOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+// Identity only — never `../settings.ts`, which would drag schemastery into
+// this bundle (see namespace.ts).
+import {
+  DEFAULT_SETTINGS, MARK_LABEL_PRESETS, TURN_NAV_NAMESPACE, type TurnNavSettings,
+} from '../namespace.ts'
+import { createMarkStore } from './mark-store.ts'
 
 export const inject = ['slots', 'sessions', 'timer']
 
-/**
- * Where the rail's on/off state is kept. A settings namespace would be the
- * product-native home, but the api-proxy serves only an allowlist of them and a
- * plugin distributed outside the harness cannot join it, so this preference is
- * browser-local rather than part of the settings document.
- */
-const VISIBILITY_KEY = 'dsh-plugin-turn-nav.visible'
 /** Sidebar foot order: above the theme switch, which sits at 10. */
 const TOGGLE_SLOT_ORDER = 5
 
@@ -70,6 +73,13 @@ const BOTTOM_EPSILON = 4
  * index pinned forever; once any scroll arrives, settling owns the pin instead.
  */
 const PIN_SAFETY_MS = 150
+/** The rail's own width, mirrored from `.tnv` so label geometry can start after it. */
+const RAIL_WIDTH = 42
+/** Gap between the rail and a mark label, and the room a label needs before it is worth drawing. */
+const LABEL_GAP = 6
+const LABEL_MIN_WIDTH = 56
+/** Cap: a label names a turn, it does not reproduce it. */
+const LABEL_MAX_WIDTH = 190
 
 const CSS = `
   .tnv {
@@ -113,6 +123,10 @@ const CSS = `
     align-items: center;
     width: 100%;
     cursor: pointer;
+    /* Anchors the mark dot, and reserves the column it sits in so a marked
+       line starts where an unmarked one does. */
+    position: relative;
+    padding-left: 7px;
   }
   .tnv-slot:focus-visible .tnv-line {
     outline: 2px solid var(--dsw-alias-state-business-primary);
@@ -139,6 +153,54 @@ const CSS = `
   .tnv-slot--current .tnv-line {
     background: var(--dsw-alias-state-business-primary);
     box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--dsw-alias-state-business-primary) 15%, transparent);
+  }
+
+  /*
+   * Marked turn: the rail's THIRD channel, and it must not fight the other
+   * two. The line keeps its own colour — repainting it would compete with the
+   * reading position for the accent — so the mark is a dot in a separate
+   * position and a separate hue (warn, i.e. "attention", not "error"). It also
+   * ignores the idle fade: a mark the user has to hover to find would defeat
+   * the point of marking it.
+   */
+  .tnv-slot--marked .tnv-line {
+    opacity: 1;
+  }
+  .tnv-slot--marked::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--dsw-alias-state-warn-primary);
+  }
+  /*
+   * Mark label, in the gutter between the rail and the transcript column.
+   * Fixed-positioned off the live slot rect (see markEls) so it follows the
+   * track's own scrolling for free.
+   */
+  .tnv-mark {
+    position: fixed;
+    z-index: 49;
+    transform: translateY(-50%);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    /* Hit-testable, unlike the gutter around it: the label is the mark's other
+       handle (click to jump, right-click to unmark). */
+    pointer-events: auto;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 16px;
+    color: var(--dsw-alias-label-tertiary);
+    transition: color 0.16s ease;
+  }
+  .tnv-mark:hover {
+    color: var(--dsw-alias-label-primary);
+  }
+  .tnv-mark--current {
+    color: var(--dsw-alias-label-secondary);
   }
 
   /*
@@ -219,6 +281,14 @@ const CSS = `
   .tnv-card-placeholder {
     color: rgba(249, 250, 251, 0.38);
   }
+  .tnv-card-hint {
+    margin-top: 8px;
+    padding-top: 7px;
+    border-top: 1px solid rgba(249, 250, 251, 0.12);
+    font-size: 11px;
+    line-height: 1;
+    color: rgba(249, 250, 251, 0.42);
+  }
 
   @media (prefers-reduced-motion: reduce) {
     .tnv-line {
@@ -295,35 +365,262 @@ const CSS = `
     overflow: hidden;
     white-space: nowrap;
   }
+
+  /*
+   * Settings card. Copied value for value from ui-settings-plugins'
+   * PluginCard.module.css and fields.module.css so this card and the shipped
+   * three read as one stack; the harness hashes its class names per build and
+   * they cannot be inherited from here, so a restyle upstream needs the same
+   * edit here. The control is a bare native checkbox because that is what the
+   * product itself uses (ModelListEditor) — a hand-drawn switch would be the
+   * one inconsistent thing on the page.
+   */
+  .tnv-set-card {
+    list-style: none;
+    position: relative;
+    border: 1px solid var(--dsw-alias-border-l2);
+    border-radius: 12px;
+    background: var(--dsw-alias-bg-layer-3);
+    transition: border-color .16s, background .16s;
+  }
+  /*
+   * Out-of-tree marker. The shipped cards and an installed plugin's card are
+   * deliberately identical in structure — they stack as one list — so the fact
+   * that this one came from a plugin the user installed has to be said, not
+   * implied. Two signals at two reading distances: this stripe is what
+   * separates them while scanning the column, the pill in the header is what
+   * names the reason once you look.
+   */
+  .tnv-set-card::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 14px;
+    bottom: 14px;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 45%, transparent);
+  }
+  .tnv-set-badge {
+    flex: none;
+    border-radius: 999px;
+    padding: 1px 8px;
+    font-size: 11px;
+    line-height: 17px;
+    font-weight: 500;
+    white-space: nowrap;
+    /* Tinted, not the platform grey the shipped "unsaved" pill uses: the two
+       can sit side by side and must not read as the same kind of statement. */
+    background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 14%, transparent);
+    color: var(--dsw-alias-state-business-primary);
+  }
+  .tnv-set-card:hover {
+    border-color: var(--dsw-alias-label-dimmed);
+  }
+  /* An open card reads as the one being worked on, not merely taller. */
+  .tnv-set-card--open {
+    background: var(--dsw-alias-bg-layer-2);
+    border-color: var(--dsw-alias-label-dimmed);
+  }
+  .tnv-set-header {
+    width: 100%;
+    appearance: none;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: 12px;
+  }
+  .tnv-set-header:focus-visible {
+    outline: 2px solid var(--dsw-alias-brand-primary);
+    outline-offset: -2px;
+  }
+  .tnv-set-headText {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .tnv-set-name {
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--dsw-alias-label-primary);
+  }
+  .tnv-set-desc {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--dsw-alias-label-tertiary);
+  }
+  .tnv-set-chevron {
+    flex: none;
+    color: var(--dsw-alias-label-tertiary);
+    transition: transform .16s;
+  }
+  .tnv-set-chevron--open {
+    transform: rotate(180deg);
+  }
+  .tnv-set-body {
+    border-top: 1px solid var(--dsw-alias-border-l2);
+    margin: 0 16px;
+    padding-bottom: 8px;
+  }
+  .tnv-set-readOnly {
+    margin: 12px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--dsw-alias-label-tertiary);
+  }
+  .tnv-set-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 0;
+  }
+  .tnv-set-fieldHead {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tnv-set-label {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.5;
+    color: var(--dsw-alias-label-primary);
+  }
+  /* Field-level note, for a switch whose consequence is not obvious from its
+     label. Matches the shipped card-description type.
+     (No backticks anywhere in this literal — they would end it.) */
+  .tnv-set-hint {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--dsw-alias-label-tertiary);
+  }
+  /* Geometry follows the shipped text input (fields.module.css .input). */
+  .tnv-set-select {
+    height: 34px;
+    padding: 0 8px;
+    border: 1px solid var(--dsw-alias-border-l2);
+    border-radius: 8px;
+    background: var(--dsw-alias-bg-layer-3);
+    color: var(--dsw-alias-label-primary);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .tnv-set-select:focus-visible {
+    outline: 2px solid var(--dsw-alias-brand-primary);
+    outline-offset: -1px;
+  }
+  .tnv-set-select:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .tnv-set-field + .tnv-set-field {
+    border-top: 1px solid var(--dsw-alias-border-l2);
+  }
 `
 
-/** The rail's on/off state, shared by the rail and its sidebar switch. */
-interface Visibility {
-  get: () => boolean
-  toggle: () => void
-  subscribe: (listener: () => void) => () => void
+/**
+ * What the durable section can currently do. Separate from the value because
+ * the card renders three different things from it: nothing at all while the
+ * namespace is unavailable, a read-only notice once a section has landed on a
+ * document that refuses writes, and an inert control until either is known.
+ */
+interface VisibilityStatus {
+  phase: 'loading' | 'ready' | 'unavailable'
+  writable: boolean
 }
 
-/** Build the visibility store, restoring the last browser-local choice. */
-function createVisibility(): Visibility {
+/**
+ * Narrow one field off a wire section, keeping the last good value when the
+ * Host does not carry it or carries something else. See the sync below for why
+ * a missing field is expected rather than exceptional.
+ * @param raw - the field as the Host sent it.
+ * @param fallback - the value to keep.
+ * @returns the field, or the fallback.
+ */
+function pickBoolean(raw: unknown, fallback: boolean): boolean {
+  return typeof raw === 'boolean' ? raw : fallback
+}
+
+/** {@link pickBoolean} for a finite number. */
+function pickNumber(raw: unknown, fallback: number): number {
+  return typeof raw === 'number' && Number.isFinite(raw) ? raw : fallback
+}
+
+/**
+ * Lengths the card's select offers: the presets, plus the stored value when a
+ * hand-edited section holds one the presets do not cover, so editing the file
+ * directly is not silently undone by opening the card.
+ * @param current - the stored length.
+ * @returns the option values, ascending.
+ */
+function labelCharOptions(current: number): number[] {
+  const presets: readonly number[] = MARK_LABEL_PRESETS
+  return presets.includes(current) ? [...presets] : [...presets, current].sort((a, b) => a - b)
+}
+
+/** The rail's preferences, shared by the rail, its sidebar switch, and its settings card. */
+interface RailStore {
+  get: () => TurnNavSettings
+  status: () => VisibilityStatus
+  /** Flip one boolean field, optimistically and durably. */
+  toggle: (field: 'visible' | 'sidebarToggle') => void
+  /** Write one field, optimistically and durably. */
+  set: <K extends keyof TurnNavSettings>(field: K, next: TurnNavSettings[K]) => void
+  subscribe: (listener: () => void) => () => void
+  /** Bind the durable section; returns the unbind disposer. */
+  attach: (scope: any) => () => void
+}
+
+/**
+ * The rail's preferences, mirrored locally over the durable settings section.
+ *
+ * A local mirror rather than reads straight off the scope: the consumers (rail,
+ * sidebar switch, settings card) render synchronously and the scope's first
+ * value arrives asynchronously, so the mirror is what lets activation proceed
+ * at the schema defaults and adopt the stored choice when it lands. Without a
+ * settings provider composed, the mirror is simply never attached and a toggle
+ * applies for the session only.
+ */
+function createRailStore(): RailStore {
   const listeners = new Set<() => void>()
-  let visible = true
-  try {
-    visible = window.localStorage.getItem(VISIBILITY_KEY) !== 'off'
-  } catch {
-    // Storage unreachable (private mode, blocked site data). The rail has no
-    // other durable home, so it starts visible and this session simply forgets.
+  let value: TurnNavSettings = { ...DEFAULT_SETTINGS }
+  // Unattached is indistinguishable from unavailable to every consumer: with
+  // no settings provider composed there is no section to show or write.
+  let status: VisibilityStatus = { phase: 'unavailable', writable: false }
+  let write: ((field: keyof TurnNavSettings, next: boolean | number) => void) | undefined
+  const notify = (): void => {
+    for (const listener of listeners) listener()
   }
   return {
-    get: () => visible,
-    toggle: () => {
-      visible = !visible
-      try {
-        window.localStorage.setItem(VISIBILITY_KEY, visible ? 'on' : 'off')
-      } catch {
-        // Same unreachable storage; the toggle still applies for this session.
-      }
-      for (const listener of listeners) listener()
+    get: () => value,
+    status: () => status,
+    toggle: (field) => {
+      const next = !value[field]
+      value = { ...value, [field]: next }
+      // Optimistic: the surface reacts on the click, not a round trip later. A
+      // rejected write makes the scope reload Host state, and that correction
+      // arrives through the same subscription that seeded this mirror.
+      notify()
+      write?.(field, next)
+    },
+    set: (field, next) => {
+      if (value[field] === next) return
+      value = { ...value, [field]: next }
+      notify()
+      write?.(field, next)
     },
     subscribe: (listener) => {
       listeners.add(listener)
@@ -331,14 +628,62 @@ function createVisibility(): Visibility {
         listeners.delete(listener)
       }
     },
+    attach: (scope) => {
+      write = (field, next) => {
+        void scope.set(field, next).catch(() => {
+          // The scope answers a failed write by reloading Host state; the
+          // corrected value re-enters through `sync` below, so the only thing
+          // this catch prevents is an unhandled rejection.
+        })
+      }
+      const sync = (): void => {
+        const snapshot = scope.getSnapshot()
+        const section = snapshot.value
+        const nextStatus: VisibilityStatus = {
+          phase: snapshot.status,
+          writable: snapshot.writable === true && snapshot.status === 'ready',
+        }
+        // Field by field, with a fallback each. A section the Host has not
+        // answered for yet is the easy case; the one that matters is version
+        // skew, which is an ORDINARY state here rather than an edge: the
+        // browser bundle updates on a page refresh while the Host's registered
+        // schema updates only on a restart, so a field this build knows about
+        // is routinely missing from the Host that answers. Copying the section
+        // wholesale puts `undefined` straight into the UI.
+        const nextValue: TurnNavSettings = section === undefined
+          ? value
+          : {
+            visible: pickBoolean(section.visible, value.visible),
+            sidebarToggle: pickBoolean(section.sidebarToggle, value.sidebarToggle),
+            markLabelChars: pickNumber(section.markLabelChars, value.markLabelChars),
+          }
+        const changed = nextValue.visible !== value.visible
+          || nextValue.sidebarToggle !== value.sidebarToggle
+          || nextValue.markLabelChars !== value.markLabelChars
+          || nextStatus.phase !== status.phase
+          || nextStatus.writable !== status.writable
+        if (!changed) return
+        value = nextValue
+        status = nextStatus
+        notify()
+      }
+      sync()
+      const off = scope.subscribe(sync)
+      return () => {
+        off()
+        write = undefined
+        status = { phase: 'unavailable', writable: false }
+        notify()
+      }
+    },
   }
 }
 
-/** Subscribe a component to the visibility store. */
-function useVisible(visibility: Visibility): boolean {
-  const [visible, setVisible] = React.useState(visibility.get)
-  React.useEffect(() => visibility.subscribe(() => setVisible(visibility.get())), [visibility])
-  return visible
+/** Subscribe a component to the preference store. */
+function useRailSettings(store: RailStore): TurnNavSettings {
+  const [value, setValue] = React.useState(store.get)
+  React.useEffect(() => store.subscribe(() => setValue(store.get())), [store])
+  return value
 }
 
 /** Extract text from a block list (accepts both ContentBlock and AssistantBlock shapes). */
@@ -524,11 +869,35 @@ export function apply(ctx: any): void {
     styleEl.remove()
   })
 
-  const visibility = createVisibility()
+  const railStore = createRailStore()
+  const markStore = createMarkStore()
 
-  /** The sidebar-foot switch that shows and hides the rail. */
-  function RailToggle(props: any): React.ReactElement {
-    const visible = useVisible(visibility)
+  /*
+   * Bind the durable section when the settings surface is composed. Nested
+   * rather than declared in `inject` above: the rail is the plugin's product,
+   * the preference is a convenience, and a composition without settings must
+   * still get a rail. `connection` and `remote` come with the binder's own
+   * contract — it reads the transport off the caller's context and registers
+   * the invalidation subscription on the caller's fiber.
+   */
+  ctx.inject(['settingsScope', 'connection', 'remote'], (settingsCtx: any) => {
+    settingsCtx.effect(
+      () => railStore.attach(settingsCtx.settingsScope.bind({ namespace: TURN_NAV_NAMESPACE })),
+      'turn-nav: preference section',
+    )
+  })
+
+  /**
+   * The sidebar-foot switch that shows and hides the rail — itself optional,
+   * so a user who sets the rail once can reclaim the row. Returning null rather
+   * than skipping registration keeps one registration for the plugin's life:
+   * the seat is claimed at activation and the preference decides only what it
+   * draws, which is also what lets the settings card put the row back without
+   * a re-registration round trip.
+   */
+  function RailToggle(props: any): React.ReactElement | null {
+    const { visible, sidebarToggle } = useRailSettings(railStore)
+    if (!sidebarToggle) return null
     const wide = props.wide !== false
     const action = visible ? '隐藏快捷导航' : '显示快捷导航'
     return React.createElement('button', {
@@ -537,16 +906,116 @@ export function apply(ctx: any): void {
       title: action,
       'aria-label': action,
       'aria-pressed': visible ? 'true' : 'false',
-      onClick: () => visibility.toggle(),
+      onClick: () => railStore.toggle('visible'),
     },
       React.createElement(IconListPenOutline16, { size: 16 }),
       wide ? React.createElement('span', { className: 'tnv-row-label' }, '快捷导航') : null,
     )
   }
 
+  /**
+   * The plugin's card in Settings → Plugins. It edits the same store the
+   * sidebar switch does, so the two never disagree.
+   *
+   * The card draws its own internals — its slot contract says so, and this
+   * bundle could not import the shipped card components anyway, they are
+   * outside the shell's frozen module table. Structure and tokens therefore
+   * mirror ui-settings-plugins' `PluginCard` (a list item whose header
+   * discloses the controls in place) so the four cards read as one stack; a
+   * restyle upstream needs the same edit here.
+   *
+   * One deliberate departure: no staged edits and no save footer. The shipped
+   * cards stage because they edit text and numbers, where writing per
+   * keystroke would be wrong; a single switch over a `live` section is the
+   * product's own immediate-apply preference pattern, and making the user
+   * confirm twice to hide a rail would be worse, not more consistent.
+   */
+  function RailSettingsCard(): React.ReactElement | null {
+    const [open, setOpen] = React.useState(false)
+    const settingsValue = useRailSettings(railStore)
+    const [status, setStatus] = React.useState(railStore.status)
+    React.useEffect(() => railStore.subscribe(() => setStatus(railStore.status())), [])
+    const visibleId = React.useId()
+    const toggleId = React.useId()
+    const labelCharsId = React.useId()
+
+    /** One boolean row, matching the shipped field geometry. */
+    const field = (id: string, label: string, field: 'visible' | 'sidebarToggle', hint?: string): React.ReactElement =>
+      React.createElement('div', { className: 'tnv-set-field', key: field },
+        React.createElement('div', { className: 'tnv-set-fieldHead' },
+          React.createElement('label', { className: 'tnv-set-label', htmlFor: id }, label),
+          React.createElement('input', {
+            id,
+            type: 'checkbox',
+            checked: settingsValue[field],
+            disabled: !status.writable,
+            onChange: () => { railStore.toggle(field) },
+          }),
+        ),
+        hint === undefined ? null : React.createElement('p', { className: 'tnv-set-hint' }, hint),
+      )
+
+    // A deployment that does not serve this section shows no trace of it,
+    // rather than a disabled card the user cannot act on (PluginCard's rule).
+    if (status.phase === 'unavailable') return null
+
+    return React.createElement('li', {
+      className: 'tnv-set-card' + (open ? ' tnv-set-card--open' : ''),
+    },
+      React.createElement('button', {
+        type: 'button',
+        className: 'tnv-set-header',
+        'aria-expanded': open,
+        'aria-label': (open ? '收起' : '展开') + '：快捷导航',
+        onClick: () => { setOpen(!open) },
+      },
+        React.createElement('span', { className: 'tnv-set-headText' },
+          React.createElement('span', { className: 'tnv-set-name' }, '快捷导航'),
+          React.createElement('span', { className: 'tnv-set-desc' }, '对话区左缘的轮次导航条。'),
+        ),
+        React.createElement('span', { className: 'tnv-set-badge' }, '自定义'),
+        React.createElement(IconChevronDownOutline14, {
+          className: 'tnv-set-chevron' + (open ? ' tnv-set-chevron--open' : ''),
+        }),
+      ),
+      open ? React.createElement('div', { className: 'tnv-set-body' },
+        // Only once a section has actually landed: saying "read-only" while
+        // the first read is still in flight would state it of every open.
+        status.phase === 'ready' && !status.writable
+          ? React.createElement('p', { className: 'tnv-set-readOnly', role: 'status' }, '配置文件当前不可写。')
+          : null,
+        field(visibleId, '显示导航条', 'visible'),
+        field(toggleId, '在侧边栏显示开关', 'sidebarToggle', '关掉之后，这张卡片是改回来的唯一入口。'),
+        React.createElement('div', { className: 'tnv-set-field', key: 'markLabelChars' },
+          React.createElement('div', { className: 'tnv-set-fieldHead' },
+            React.createElement('label', { className: 'tnv-set-label', htmlFor: labelCharsId }, '标记标题字数'),
+            // A select, not a number field: it writes a complete value on every
+            // change, which is what lets this card keep applying immediately
+            // (see the card's own JSDoc). A hand-edited section may hold any
+            // value the schema allows, so an off-preset one joins the list
+            // rather than being silently replaced by the nearest preset.
+            React.createElement('select', {
+              id: labelCharsId,
+              className: 'tnv-set-select',
+              value: String(settingsValue.markLabelChars),
+              disabled: !status.writable,
+              onChange: (event: any) => {
+                railStore.set('markLabelChars', Number(event.target.value))
+              },
+            }, ...labelCharOptions(settingsValue.markLabelChars)
+              .map(n => React.createElement('option', { key: n, value: String(n) }, n + ' 字'))),
+          ),
+          React.createElement('p', { className: 'tnv-set-hint' },
+            '导航条与正文列之间的空间也会截断标签，窗口窄时设大了也看不全。'),
+        ),
+      ) : null,
+    )
+  }
+
   /** The rail component (created once per activation, so hook state is stable). */
   function TurnNav(props: any): React.ReactElement {
-    const visible = useVisible(visibility)
+    const settings = useRailSettings(railStore)
+    const visible = settings.visible
     const railRef = React.useRef<any>(null)
     const trackRef = React.useRef<any>(null)
     const slotRefs = React.useRef<any[]>([])
@@ -576,6 +1045,21 @@ export function apply(ctx: any): void {
 
     const geom = useConversationGeometry(currentId)
     const [hoverIndex, setHoverIndex] = React.useState(-1)
+
+    // Marks are per session, so the set is re-read whenever either the store or
+    // the selected session changes.
+    const [markVersion, setMarkVersion] = React.useState(0)
+    React.useEffect(() => markStore.subscribe(() => { setMarkVersion(v => v + 1) }), [])
+    const marks = React.useMemo(
+      () => (currentId ? markStore.get(currentId) : new Set<string>()),
+      [currentId, markVersion],
+    )
+    // Sessions the user deleted take their marks with them, on the next list
+    // change rather than on a timer.
+    const sessionIds = props.useSessions((s: any) => s.ids)
+    React.useEffect(() => {
+      if (Array.isArray(sessionIds)) markStore.prune(sessionIds)
+    }, [sessionIds])
     const [overflow, setOverflow] = React.useState(false)
 
     const railHeight = geom ? Math.max(120, geom.height - 140) : 0
@@ -699,6 +1183,7 @@ export function apply(ctx: any): void {
 
     const slotEls = turns.map((turn, i) => {
       const isCurrent = i === currentIndex
+      const isMarked = marks.has(turn.key)
       const line = React.createElement('div', {
         className: 'tnv-line',
         style: {
@@ -709,19 +1194,95 @@ export function apply(ctx: any): void {
       return React.createElement('button', {
         key: turn.key,
         type: 'button',
-        className: 'tnv-slot' + (isCurrent ? ' tnv-slot--current' : ''),
+        className: 'tnv-slot'
+          + (isCurrent ? ' tnv-slot--current' : '')
+          + (isMarked ? ' tnv-slot--marked' : ''),
         style: { height: step + 'px' },
         ref: (el: any) => {
           slotRefs.current[i] = el
         },
-        'aria-label': '第 ' + (i + 1) + ' 轮：' + (turn.title || '（空消息）'),
+        'aria-label': '第 ' + (i + 1) + ' 轮：' + (turn.title || '（空消息）') + (isMarked ? '（已标记）' : ''),
         'aria-current': isCurrent ? 'true' : undefined,
+        'aria-pressed': isMarked ? 'true' : undefined,
         onMouseEnter: () => setHoverIndex(i),
         onFocus: () => setHoverIndex(i),
         onClick: () => jumpTo(turn.key, i),
+        // Right-click marks. The rail has no room for a second hit target
+        // beside a 2px line, and the preview card cannot hold a button without
+        // becoming hit-testable — which would need pointer-grace handling
+        // across the gap between rail and card. The card carries the hint
+        // instead, so the gesture is discoverable without that machinery.
+        onContextMenu: (event: any) => {
+          event.preventDefault()
+          if (currentId) markStore.toggle(currentId, turn.key)
+        },
+        // The keyboard equivalent, so marking is not mouse-only.
+        onKeyDown: (event: any) => {
+          if (event.key !== 'm' && event.key !== 'M') return
+          event.preventDefault()
+          if (currentId) markStore.toggle(currentId, turn.key)
+        },
       }, line)
     })
     slotRefs.current.length = turns.length
+
+    /*
+     * Mark labels: the first words of each marked turn, so a marked line says
+     * WHAT it is without being hovered — which is the whole point of marking
+     * one. Positioned off the live slot rects rather than laid out inside the
+     * track, because the track scrolls under `overflow-x: hidden` and would
+     * clip anything reaching past the rail's 42px.
+     *
+     * The room is whatever lies between the rail and the transcript column, so
+     * a narrow window offers none and the labels simply do not render — the
+     * amber dot still marks the line. Never hit-testable: the gutter belongs to
+     * text selection.
+     */
+    const markEls = marks.size === 0 ? null : (() => {
+      // Measured here, not cached in the geometry: the column's left edge comes
+      // from a rendered chat node, and the rail's geometry is measured once at
+      // mount — where that node may not exist yet, and no resize follows its
+      // arrival to correct a cached miss.
+      const column = document.querySelector('[data-chat-anchor-key]')
+      if (column === null) return null
+      const labelRoom = column.getBoundingClientRect().left
+        - (geom.left + 10 + RAIL_WIDTH) - LABEL_GAP
+      if (labelRoom < LABEL_MIN_WIDTH) return null
+      return turns.flatMap((turn, i) => {
+        if (!marks.has(turn.key)) return []
+        const slot = slotRefs.current[i]
+        if (!slot) return []
+        const rect = slot.getBoundingClientRect()
+        // Outside the rail's own band the slot has scrolled out of the track.
+        if (rect.bottom < geom.top || rect.top > geom.top + railHeight) return []
+        const full = turn.title || '（空消息）'
+        // Two independent caps, and both must hold: the character count is the
+        // user's choice about how much of a title names it, the pixel width is
+        // the layout's hard limit at the transcript column's edge.
+        const label = [...full].length <= settings.markLabelChars
+          ? full
+          : [...full].slice(0, settings.markLabelChars).join('') + '…'
+        return [React.createElement('span', {
+          key: turn.key,
+          className: 'tnv-mark' + (i === currentIndex ? ' tnv-mark--current' : ''),
+          title: full,
+          style: {
+            top: rect.top + rect.height / 2,
+            left: geom.left + 10 + RAIL_WIDTH + LABEL_GAP,
+            maxWidth: Math.min(labelRoom, LABEL_MAX_WIDTH),
+          },
+          // The label is the mark's other handle: clicking it goes to the turn,
+          // right-clicking removes the mark. Only the label itself is
+          // hit-testable — the rest of the gutter stays available for the text
+          // selection it belongs to.
+          onClick: () => jumpTo(turn.key, i),
+          onContextMenu: (event: any) => {
+            event.preventDefault()
+            if (currentId) markStore.toggle(currentId, turn.key)
+          },
+        }, label)]
+      })
+    })()
 
     const hovered = hoverIndex >= 0 && hoverIndex < turns.length ? turns[hoverIndex] : null
     const cardEl = hovered
@@ -739,6 +1300,12 @@ export function apply(ctx: any): void {
           React.createElement('div', { className: 'tnv-card-reply' },
             hovered.reply || React.createElement('span', { className: 'tnv-card-placeholder' }, '（回复中…）'),
           ),
+          // Where the marking gesture is taught. The card already appears on
+          // hover and already describes the turn, so it is the one surface that
+          // can carry the hint without adding chrome to the rail itself.
+          React.createElement('div', { className: 'tnv-card-hint' },
+            marks.has(hovered.key) ? '右键取消标记' : '右键标记',
+          ),
         )
       : null
 
@@ -752,6 +1319,11 @@ export function apply(ctx: any): void {
       React.createElement('div', {
         className: 'tnv-track',
         ref: trackRef,
+        // Labels are placed from live slot rects, and the track scrolls on its
+        // own once the rail overflows — without this the labels would stay
+        // where the lines used to be. Conversation scrolling already
+        // re-renders through the reading-position marker.
+        onScroll: marks.size === 0 ? undefined : () => { setMarkVersion(v => v + 1) },
         onMouseMove: onTrackMove,
         onMouseLeave: () => {
           setHoverIndex(-1)
@@ -759,6 +1331,7 @@ export function apply(ctx: any): void {
           paint(null)
         },
       }, slotEls),
+      markEls,
       cardEl,
     )
   }
@@ -771,5 +1344,14 @@ export function apply(ctx: any): void {
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register(
     { name: 'sidebar.footer.action', id: 'turn-nav-toggle', order: TOGGLE_SLOT_ORDER },
     (props: any) => React.createElement(RailToggle, props),
+  ))
+
+  // Keyed on the namespace: the configurable-plugins tab pairs this card with
+  // the section the Host half registered under the same key, and never learns
+  // what either means. The seat exists only while that tab is mounted, which
+  // is what `slots.inject` waits for.
+  ctx.slots.inject('settings.plugin.item', () => ctx.slots.register(
+    { name: 'settings.plugin.item', key: TURN_NAV_NAMESPACE },
+    () => React.createElement(RailSettingsCard),
   ))
 }
