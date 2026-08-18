@@ -1,0 +1,6 @@
+# Bundle layer for dsh-plugin-quote-select, applied when a profile lists this
+# bundle. The row mounts the node half; the browser half is discovered from
+# this package's `dsh.client` declaration and served at /plugins/<name>/client.js.
+- insert:
+    - id: ui-quote-select
+      name: dsh-plugin-quote-select
