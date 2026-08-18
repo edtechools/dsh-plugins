@@ -11,6 +11,14 @@ import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { defineTool, type JsonValue } from '@deepseek-ai/dsh-tools'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
+import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { WEB_SEARCH_NAMESPACE, type WebSearchSettings } from './namespace.ts'
+import { WebSearchSettingsSchema } from './settings.ts'
+
+export {
+  WEB_SEARCH_NAMESPACE, COUNT_RANGE, DEFAULT_SETTINGS, type WebSearchSettings,
+} from './namespace.ts'
+export { WebSearchSettingsSchema } from './settings.ts'
 
 export const name = 'web-search-tool'
 export const inject = ['tools', 'credentials']
@@ -40,7 +48,36 @@ export const Config: Schema<Config> = Schema.object({
 })
 
 export function apply(ctx: Context, config: Config): void {
-  const ref = credentialRef(config.apiKeyRef)
+  /**
+   * The live configuration. Starts at the cordis.yml `Config` and is replaced
+   * by the settings section once a settings provider composes — a deployment
+   * without one keeps working, unconfigurable but correct.
+   */
+  let read = (): WebSearchSettings => config
+
+  ctx.inject(['settings'], (settingsCtx) => {
+    // cordis.yml becomes the composition base, so an untouched field still
+    // reads from the deployment's own configuration and clearing a field in
+    // the card returns it there rather than to the schema default.
+    const scope = settingsCtx.settings.register(
+      settingsNamespace(WEB_SEARCH_NAMESPACE),
+      WebSearchSettingsSchema,
+      {
+        base: {
+          endpoint: config.endpoint,
+          apiKeyRef: config.apiKeyRef,
+          defaultCount: config.defaultCount,
+          defaultSummary: config.defaultSummary,
+        },
+      },
+    )
+    settingsCtx.effect(() => {
+      read = () => scope.get()
+      return () => {
+        read = () => config
+      }
+    }, 'web-search: settings-backed configuration')
+  })
 
   ctx.tools.register(defineTool({
     // Named for its source, not for the capability: the harness's own web
@@ -50,6 +87,10 @@ export function apply(ctx: Context, config: Config): void {
     description: 'Search the web through the Bocha (博查) search API. Strongest on Chinese-language queries and sources from mainland China.',
     parameters: {
       query: { type: 'string', required: true, description: 'The search query' },
+      // Deliberately the cordis.yml values, not the live ones: a tool's
+      // parameter descriptions are part of the schema the model is shown, and
+      // that schema is built once at registration. Quoting a number that can
+      // drift would make the description a lie rather than a default.
       count: { type: 'number', description: `Number of results (default ${config.defaultCount})` },
       summary: { type: 'boolean', description: `Include summary (default ${config.defaultSummary})` },
     },
@@ -59,17 +100,19 @@ export function apply(ctx: Context, config: Config): void {
     },
     timeoutMs: config.timeoutMs,
     async execute(args, exec) {
-      // Resolved per call, never cached: a rotated key reaches the very next
-      // search without restarting the plugin.
-      const hit = await ctx.credentials.resolve(ref)
+      // Resolved per call, never cached: a rotated key — or a reference the
+      // user just renamed in the settings card — reaches the very next search
+      // without restarting the plugin.
+      const settings = read()
+      const hit = await ctx.credentials.resolve(credentialRef(settings.apiKeyRef))
       if (!hit) {
         throw new Error(
-          `web-search: credential ${config.apiKeyRef} is not configured — `
+          `web-search: credential ${settings.apiKeyRef} is not configured — `
           + `store it with the credential provider (for example in $DSH_HOME/.credentials.yaml)`,
         )
       }
 
-      const response = await fetch(config.endpoint, {
+      const response = await fetch(settings.endpoint, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${hit.value}`,
@@ -77,8 +120,8 @@ export function apply(ctx: Context, config: Config): void {
         },
         body: JSON.stringify({
           query: args.query,
-          count: args.count ?? config.defaultCount,
-          summary: args.summary ?? config.defaultSummary,
+          count: args.count ?? settings.defaultCount,
+          summary: args.summary ?? settings.defaultSummary,
         }),
         signal: exec.signal,
       })
@@ -97,7 +140,7 @@ export function apply(ctx: Context, config: Config): void {
       // part a runtime check could only re-derive at the cost of a deep walk.
       const payload: unknown = await response.json()
       if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
-        throw new Error(`web-search: ${config.endpoint} answered with ${payload === null ? 'null' : typeof payload}, expected a JSON object`)
+        throw new Error(`web-search: ${settings.endpoint} answered with ${payload === null ? 'null' : typeof payload}, expected a JSON object`)
       }
       return payload as Record<string, JsonValue>
     },

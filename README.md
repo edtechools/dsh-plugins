@@ -7,7 +7,7 @@
 | [`packages/quote-select`](packages/quote-select) | node + 浏览器 | 选中消息文本 → 引用进输入框，可带评论；带设置卡 |
 | [`packages/turn-nav`](packages/turn-nav) | node + 浏览器 | 对话区左缘的轮次导航条，可标记轮次；带设置卡 |
 | [`packages/theme-toggle`](packages/theme-toggle) | node + 浏览器 | 侧边栏底部的明暗切换 |
-| [`packages/web-search`](packages/web-search) | node | 基于博查搜索 API 的 `bocha_web_search` 工具 |
+| [`packages/web-search`](packages/web-search) | node + 浏览器 | 基于博查搜索 API 的 `bocha_web_search` 工具；带设置卡 |
 
 每个包本身就是一个 **bundle**（manifest 里声明 `dsh.bundle.patch`），所以 `dsh` 会自己把它的层追加进 profile。`dsh plugin --profile web remove dsh-plugin-turn-nav` 会同时移除依赖和它的层。profile 自己的 `cordis.patch.yml` 保持 `[]`，只用来放这台机器专属的行覆盖。
 
@@ -124,10 +124,13 @@ window.__ModuleLoader__.load({ id: "dsh-plugin-turn-nav", factory: (require) => 
 
 偏好可以放进产品自己的设置文档（`$DSH_HOME/settings.yaml`），并在 设置 → 插件 里出一张卡，不必退回 `localStorage` 或硬编码常量。
 
-两个现成范例，差别在**写入时机**，照着抄之前先选一种：
+三个现成范例，差别在**写入时机**和**有没有基线层**，照着抄之前先选一种：
 
-- **`turn-nav`：即时生效。** 两个布尔开关，点一下就写。开关没有中间态，没什么可暂存的；这也是产品自己在通用设置里的做法。
+- **`turn-nav`：即时生效。** 布尔开关点一下就写，字数用下拉（每次变更写入完整值）。都没有中间态，没什么可暂存的；这也是产品自己在通用设置里的做法。
 - **`quote-select`：暂存 + 保存/放弃。** 三个数字上限，按键即写是错的（在 `600` 里改一位会先写出 `6`）。内置那三张卡都做暂存，正是这个原因。
+- **`web-search`：暂存，且 cordis.yml 是基线层。** 注册时传 `base`，于是解析顺序是 schema 默认 → cordis.yml → 用户层。用户没动过的字段读的是部署自己的配置，卡片里「恢复」一个字段是**回到 cordis.yml**、而不是回到 schema 默认。字段是否被覆盖看它**在不在** `user` 层里——一个和基线值相同的覆盖仍然是覆盖，比较值是看不出来的。
+
+  它的设置命名空间是 cordis.yml `Config` 的**子集**：`timeoutMs` 在 `defineTool` 时就被复制进工具定义，改它得把工具从注册表里摘下来再放回去，所以留在 cordis.yml 当部署旋钮——harness 自己的 web-search 卡也是这么划的界。
 
 **rc.7 之前做不到。** rc.6 的 api-proxy 有一张 `exposedNamespaces()` 允许列表（模型 provider + `WEB_SETTINGS_NAMESPACES` + `PRODUCT_SETTINGS_NAMESPACES`，全部仓库内硬编码），`settings.describe` 按它过滤、写入返回 `settings-not-exposed`，仓库外插件加不进去。rc.7 把这三个符号整个删了。插槽 `settings.plugin.item` 本身 rc.6 就有，只是当时接不通。
 
