@@ -21,7 +21,7 @@ export const QUOTE_SELECT_NAMESPACE = 'dsh-plugin-quote-select'
  * one message is a judgement about the deployment's model and context budget,
  * not a property of the quoting mechanism.
  */
-export interface QuoteSelectSettings {
+export interface QuoteSelectConfig {
   /** Longest passage kept; a longer selection is cut with an ellipsis. */
   maxQuoteLength: number
   /** Longest comment kept; also the inputs' `maxLength`. */
@@ -31,7 +31,7 @@ export interface QuoteSelectSettings {
 }
 
 /** Applied when no settings provider is composed, matching the schema defaults. */
-export const DEFAULT_SETTINGS: QuoteSelectSettings = {
+export const DEFAULT_CONFIG: QuoteSelectConfig = {
   maxQuoteLength: 600,
   maxCommentLength: 200,
   maxQuotes: 8,

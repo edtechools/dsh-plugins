@@ -122,42 +122,52 @@ window.__ModuleLoader__.load({ id: "dsh-plugin-turn-nav", factory: (require) => 
 
 ## 插件自己的设置卡（需要 dsh ≥ 0.1.0-rc.7）
 
-偏好可以放进产品自己的设置文档（`$DSH_HOME/settings.yaml`），并在 设置 → 插件 里出一张卡，不必退回 `localStorage` 或硬编码常量。
-
-三个现成范例，差别在**写入时机**和**有没有基线层**，照着抄之前先选一种：
-
-- **`turn-nav`：即时生效。** 布尔开关点一下就写，字数用下拉（每次变更写入完整值）。都没有中间态，没什么可暂存的；这也是产品自己在通用设置里的做法。
-- **`quote-select`：暂存 + 保存/放弃。** 三个数字上限，按键即写是错的（在 `600` 里改一位会先写出 `6`）。内置那三张卡都做暂存，正是这个原因。
-- **`web-search`：暂存，且 cordis.yml 是基线层。** 注册时传 `base`，于是解析顺序是 schema 默认 → cordis.yml → 用户层。用户没动过的字段读的是部署自己的配置，卡片里「恢复」一个字段是**回到 cordis.yml**、而不是回到 schema 默认。字段是否被覆盖看它**在不在** `user` 层里——一个和基线值相同的覆盖仍然是覆盖，比较值是看不出来的。
-
-  它的设置命名空间是 cordis.yml `Config` 的**子集**：`timeoutMs` 在 `defineTool` 时就被复制进工具定义，改它得把工具从注册表里摘下来再放回去，所以留在 cordis.yml 当部署旋钮——harness 自己的 web-search 卡也是这么划的界。
-
-  它还演示了**只写字段**：`apiKey` 声明成 `Schema.string().role('secret')`，设置层会把它从每个响应的每一层里剥掉，只在描述符的 `secrets` 列表里报告「有没有」。所以卡片能写、能清、能显示已配置，但读不回来——密钥输入框因此在暂存表单之外，用自己的按钮写入（没有已提交值可以 diff）。
-  
-  注意代价：`role('secret')` 的值**明文存在 `$DSH_HOME/settings.yaml` 里**。想让密钥完全不进配置文件，就别填这个字段，改用凭据引用。
-
-**rc.7 之前做不到。** rc.6 的 api-proxy 有一张 `exposedNamespaces()` 允许列表（模型 provider + `WEB_SETTINGS_NAMESPACES` + `PRODUCT_SETTINGS_NAMESPACES`，全部仓库内硬编码），`settings.describe` 按它过滤、写入返回 `settings-not-exposed`，仓库外插件加不进去。rc.7 把这三个符号整个删了。插槽 `settings.plugin.item` 本身 rc.6 就有，只是当时接不通。
-
-两个半边靠**同一个命名空间字符串**配对，tab 不需要知道它是什么意思：
+**一个插件只有一个 `Config`。** 它同时是 cordis.yml 的 schema 和设置命名空间的 schema，用 harness 自己的 [`installSettingsSection`](../deepseek-harness/packages/settings/settings/src/index.ts) 接线（`llm-deepseek`、`llm-pi-ai`、`agent-loop` 都用它）。不要再造第二套类型。
 
 ```ts
-// node 半边：可选注入，没有 settings provider 时插件照常工作
-ctx.inject(['settings'], (c) => c.settings.register(settingsNamespace(NS), Schema))
+const NS = settingsNamespace('dsh-plugin-<name>')   // = 包名
 
-// 浏览器半边：绑定 + 注册卡片（keyed 插槽，选项是 key 不是 id）
-ctx.inject(['settingsScope', 'connection', 'remote'], (c) => {
-  c.effect(() => attach(c.settingsScope.bind({ namespace: NS })), '...')
+installSettingsSection(ctx, NS, Config, config, {
+  setSource: (source) => { current = source },   // 每次调用读 current()
+  onChange: ensureRegistrationFacts,             // 重算注册期固定下来的东西
 })
-ctx.slots.inject('settings.plugin.item', () => ctx.slots.register(
-  { name: 'settings.plugin.item', key: NS }, Card))
 ```
+
+于是配置的解析链只有一条，找一个值就看这三层：
+
+```
+Config schema 的 .default()      写在代码里，不落盘
+      ↓ 被覆盖
+cordis.yml                       ~/.dsh/profiles/<name>/cordis.patch.yml
+      ↓ 被覆盖                    （helper 把它当 base 传进去）
+用户层                            ~/.dsh/settings.yaml   ← 设置卡写这里
+```
+
+卡片里点「恢复」是删掉用户层那一行、**落回 cordis.yml**，不是落回代码默认值。判断某字段有没有被覆盖，看它**在不在** `user` 层里——和 base 相同的覆盖仍然是覆盖。
+
+**`onChange` 是给「注册时就固定下来的事实」用的。** 比如 `defineTool` 会把 `timeoutMs` 复制进工具定义、参数描述里引的默认值也只在注册时构建一次——这些不是"读不到新值"，而是要**重新注册**。`web-search` 就是这么做的：比较一组 facts，只有它们变了才摘下工具重新注册，改 endpoint 或密钥则不打扰进行中的一轮。`llm-deepseek` 同理（`registration.replace`）。
+
+三张现成的卡，差别在**写入时机**：
+
+- **`turn-nav`：即时生效。** 布尔开关点一下就写，字数用下拉（每次变更写入完整值）。都没有中间态。
+- **`quote-select` / `web-search`：暂存 + 保存/放弃。** 文本和数字按键即写是错的（在 `600` 里改一位会先写出 `6`）。内置那三张卡都做暂存，正是这个原因。
+
+**密钥用 `role('secret')`**，和 `web-search-deepseek`、`llm-deepseek` 一致：设置层把它从每个响应的每一层剥掉，只在描述符的 `secrets` 列表里报告「有没有」。所以卡片能写、能清、能显示已配置，但读不回来——密钥控件因此在暂存表单之外，用自己的按钮写。
+
+配一条 `role('credential-ref')` 的引用名做另一条路：**字面密钥优先，为空才去解析引用**。引用值由凭据 provider 找，顺序是 进程环境变量 → `~/.dsh/.credentials.yaml` → 项目 `.env` → 用户 `.env`。
+
+注意代价：`role('secret')` 的值**明文存在 `settings.yaml` 里**。"只写"指的是不经 wire 回传浏览器，不是加密存储。要密钥完全不进配置文件，就别填这个字段。
+
+**rc.7 之前做不到。** rc.6 的 api-proxy 有一张 `exposedNamespaces()` 允许列表，`describe` 按它过滤、写入返回 `settings-not-exposed`，仓库外插件加不进去。rc.7 把那几个符号整个删了。插槽 `settings.plugin.item` 本身 rc.6 就有，只是当时接不通。
 
 四个坑：
 
 1. **命名空间用包名。** 它同时是设置文档的键和卡片的 slot key，两处对不上就静默不显示。
-2. **浏览器半边不要 import 放 schema 的那个文件。** schemastery 不在平台模块表里，会被整个内联进客户端产物。把命名空间常量单独放一个无 import 的文件（`namespace.ts`），两个半边各取所需。
+2. **浏览器半边不要 import 放 schema 的那个文件。** schemastery 不在平台模块表里，会被整个内联进客户端产物。把**类型和命名空间**放一个无运行时 import 的 `namespace.ts`（类型会擦除），schema 留在 `index.ts`。
 3. **node 半边从此踩[约束一](#约束一仅限本地开发link-够不着扁平兜底目录)**——它现在 import Service Definition 了，需要那条 `link:` devDependency，否则静默 `ERR_MODULE_NOT_FOUND`。
-4. **卡片得自己画。** 插槽契约写明 "A card draws its own internals"；`ui-settings-plugins` 的 `CardForm` 是包内私有且不在平台模块表里，`schema-form` 只导出模型层（`rehydrateSchema`/`validateDraft`/`setPath`），没有 React 组件。
+4. **卡片得自己画。** 插槽契约写明 "A card draws its own internals"；`ui-settings-plugins` 的 `CardForm` 是包内私有且不在平台模块表里，`schema-form` 只导出模型层，没有 React 组件。
+
+**镜像要逐字段取值 + 兜底**，不要整个抄宿主返回的 section。版本错配是常态：刷新页面换客户端产物，重启进程才换宿主 schema，所以新产物向旧宿主要一个字段拿回 `undefined` 是会发生的。
 
 不起 GUI 也能验证整条链路——直接打 RPC（路径是 `/api/<method>`，方法名里的点不是斜杠）：
 
@@ -166,6 +176,11 @@ curl -s -X POST http://127.0.0.1:3080/api/settings.describe \
   -H 'Content-Type: application/json' \
   -d '{"type":"client-request","rpcId":"1","method":"settings.describe","payload":{}}'
 ```
+
+## 不走设置的两处状态
+
+- **turn-nav 的轮次标记** 存 `localStorage`（按会话分组、按会话列表剪枝）：它是每会话的数据且会增长，而 `settings.yaml` 是你会用编辑器打开的文件。代价是换浏览器不跟随；宿主目前没有会话级注解存储可写。
+- **quote-select 的引用** 编码在**草稿文本**里，随会话草稿走。设置里只有那三个上限。
 
 ## 升级风险
 

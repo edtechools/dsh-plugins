@@ -16,12 +16,12 @@
 
 import * as React from 'react'
 import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { LIMITS, type QuoteSelectSettings } from '../namespace.ts'
+import { LIMITS, type QuoteSelectConfig } from '../namespace.ts'
 import type { QuoteSelectStore } from './settings-store.ts'
 
 /** One editable row: its field, its label, and the note under it. */
 interface FieldSpec {
-  field: keyof QuoteSelectSettings
+  field: keyof QuoteSelectConfig
   label: string
   hint: string
 }
@@ -33,10 +33,10 @@ const FIELDS: readonly FieldSpec[] = [
 ]
 
 /** Staged text for every field, keyed by field name. */
-type Draft = Record<keyof QuoteSelectSettings, string>
+type Draft = Record<keyof QuoteSelectConfig, string>
 
 /** Project the committed section into editable text. */
-function draftOf(value: QuoteSelectSettings): Draft {
+function draftOf(value: QuoteSelectConfig): Draft {
   return {
     maxQuoteLength: String(value.maxQuoteLength),
     maxCommentLength: String(value.maxCommentLength),
@@ -51,7 +51,7 @@ function draftOf(value: QuoteSelectSettings): Draft {
  * @param raw - the staged text.
  * @returns the value, or undefined when it cannot be saved.
  */
-function parseField(field: keyof QuoteSelectSettings, raw: string): number | undefined {
+function parseField(field: keyof QuoteSelectConfig, raw: string): number | undefined {
   if (!/^\d+$/.test(raw.trim())) return undefined
   const parsed = Number(raw.trim())
   const range = LIMITS[field]
@@ -99,7 +99,7 @@ export function SettingsCard({ store }: { store: QuoteSelectStore }): React.Reac
   }
 
   const save = (): void => {
-    const patch: Partial<QuoteSelectSettings> = {}
+    const patch: Partial<QuoteSelectConfig> = {}
     FIELDS.forEach((spec, index) => {
       const next = parsed[index]
       if (next !== undefined && next !== value[spec.field]) patch[spec.field] = next

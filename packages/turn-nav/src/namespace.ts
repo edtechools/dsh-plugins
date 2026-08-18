@@ -16,8 +16,8 @@
  */
 export const TURN_NAV_NAMESPACE = 'dsh-plugin-turn-nav'
 
-/** The rail's durable preference section. */
-export interface TurnNavSettings {
+/** Everything this plugin can be configured with, from either layer. */
+export interface TurnNavConfig {
   /** Whether the rail itself is drawn. */
   visible: boolean
   /** Whether the sidebar foot carries the rail's quick switch. */
@@ -34,7 +34,7 @@ export interface TurnNavSettings {
  * Both switches start on: the rail is the plugin's product, and its switch is
  * how a first-time user discovers there is anything to turn off.
  */
-export const DEFAULT_SETTINGS: TurnNavSettings = {
+export const DEFAULT_CONFIG: TurnNavConfig = {
   visible: true,
   sidebarToggle: true,
   markLabelChars: 12,

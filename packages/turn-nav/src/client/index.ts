@@ -35,7 +35,7 @@ import { IconChevronDownOutline14, IconListPenOutline16 } from '@deepseek-ai/dsh
 // Identity only — never `../settings.ts`, which would drag schemastery into
 // this bundle (see namespace.ts).
 import {
-  DEFAULT_SETTINGS, MARK_LABEL_PRESETS, TURN_NAV_NAMESPACE, type TurnNavSettings,
+  DEFAULT_CONFIG, MARK_LABEL_PRESETS, TURN_NAV_NAMESPACE, type TurnNavConfig,
 } from '../namespace.ts'
 import { createMarkStore } from './mark-store.ts'
 
@@ -573,12 +573,12 @@ function labelCharOptions(current: number): number[] {
 
 /** The rail's preferences, shared by the rail, its sidebar switch, and its settings card. */
 interface RailStore {
-  get: () => TurnNavSettings
+  get: () => TurnNavConfig
   status: () => VisibilityStatus
   /** Flip one boolean field, optimistically and durably. */
   toggle: (field: 'visible' | 'sidebarToggle') => void
   /** Write one field, optimistically and durably. */
-  set: <K extends keyof TurnNavSettings>(field: K, next: TurnNavSettings[K]) => void
+  set: <K extends keyof TurnNavConfig>(field: K, next: TurnNavConfig[K]) => void
   subscribe: (listener: () => void) => () => void
   /** Bind the durable section; returns the unbind disposer. */
   attach: (scope: any) => () => void
@@ -596,11 +596,11 @@ interface RailStore {
  */
 function createRailStore(): RailStore {
   const listeners = new Set<() => void>()
-  let value: TurnNavSettings = { ...DEFAULT_SETTINGS }
+  let value: TurnNavConfig = { ...DEFAULT_CONFIG }
   // Unattached is indistinguishable from unavailable to every consumer: with
   // no settings provider composed there is no section to show or write.
   let status: VisibilityStatus = { phase: 'unavailable', writable: false }
-  let write: ((field: keyof TurnNavSettings, next: boolean | number) => void) | undefined
+  let write: ((field: keyof TurnNavConfig, next: boolean | number) => void) | undefined
   const notify = (): void => {
     for (const listener of listeners) listener()
   }
@@ -650,7 +650,7 @@ function createRailStore(): RailStore {
         // schema updates only on a restart, so a field this build knows about
         // is routinely missing from the Host that answers. Copying the section
         // wholesale puts `undefined` straight into the UI.
-        const nextValue: TurnNavSettings = section === undefined
+        const nextValue: TurnNavConfig = section === undefined
           ? value
           : {
             visible: pickBoolean(section.visible, value.visible),
@@ -680,7 +680,7 @@ function createRailStore(): RailStore {
 }
 
 /** Subscribe a component to the preference store. */
-function useRailSettings(store: RailStore): TurnNavSettings {
+function useRailSettings(store: RailStore): TurnNavConfig {
   const [value, setValue] = React.useState(store.get)
   React.useEffect(() => store.subscribe(() => setValue(store.get())), [store])
   return value

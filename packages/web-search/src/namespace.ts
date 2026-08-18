@@ -1,10 +1,17 @@
 /**
- * The settings identity both halves share, kept free of runtime imports.
+ * The plugin's configuration type and settings identity, kept free of runtime
+ * imports so both halves can take them.
  *
- * The Host half pairs this with a schemastery schema (settings.ts); the browser
- * half must NOT reach that file, because schemastery is absent from the shell's
- * frozen module table and would be inlined into the client bundle for a
- * constant.
+ * There is exactly ONE configuration type. `Config` is the cordis.yml schema
+ * AND the settings namespace's schema: `installSettingsSection` registers the
+ * namespace with the plugin's composition entry as the `base` layer, so the
+ * resolution chain is schema default → cordis.yml → the user's settings
+ * document, with no parallel type to keep in step.
+ *
+ * The schema itself lives in index.ts because it needs schemastery, which is
+ * absent from the shell's frozen module table and would be inlined into the
+ * client bundle for a constant. Types erase, so the browser half takes this
+ * file and nothing else.
  */
 
 /**
@@ -14,27 +21,14 @@
  */
 export const WEB_SEARCH_NAMESPACE = 'dsh-plugin-web-search'
 
-/**
- * The user-tunable half of this plugin's configuration. Deliberately a SUBSET
- * of the plugin's cordis.yml `Config`: `timeoutMs` is fixed when the tool
- * registers (`defineTool` copies the value into the definition), so changing it
- * live would mean tearing the tool out of the registry and putting it back
- * mid-conversation. It stays a deployment knob in cordis.yml, which is also
- * where the harness's own web-search card draws the line.
- *
- * cordis.yml supplies these as the namespace's composition `base`, so a value
- * the user never touched still reads from the deployment's own configuration,
- * and clearing a field in the card returns it there rather than to the schema
- * default.
- */
-export interface WebSearchSettings {
+/** Everything this plugin can be configured with, from either layer. */
+export interface WebSearchConfig {
   /** Search API endpoint. */
   endpoint: string
   /**
-   * The API key itself, when the user pasted one instead of naming a
-   * reference. A `role('secret')` field: the settings seam strips it from
-   * every response in every layer, so the Host reads a value here that the
-   * browser can write but never read back. Absent means "use the reference".
+   * The API key itself. A `role('secret')` field: the settings seam strips it
+   * from every layer of every response, so the Host reads a value the browser
+   * can write but never read back. Absent means "resolve {@link apiKeyRef}".
    */
   apiKey?: string
   /** Credential reference used when no literal key is stored. */
@@ -43,15 +37,21 @@ export interface WebSearchSettings {
   defaultCount: number
   /** Summary flag used when the model omits `summary`. */
   defaultSummary: boolean
+  /** Cooperative timeout budget for one search. */
+  timeoutMs: number
 }
 
 /** Applied when neither a stored section nor a composition base supplies one. */
-export const DEFAULT_SETTINGS: WebSearchSettings = {
+export const DEFAULT_CONFIG: WebSearchConfig = {
   endpoint: 'https://api.bocha.cn/v1/web-search',
   apiKeyRef: 'BOCHA_API_KEY',
   defaultCount: 10,
   defaultSummary: true,
+  timeoutMs: 30000,
 }
 
-/** Accepted range for the result count, shared by the schema and the card's input. */
-export const COUNT_RANGE = { min: 1, max: 50 } as const
+/** Accepted ranges, shared by the schema and the card's inputs. */
+export const RANGES = {
+  defaultCount: { min: 1, max: 50 },
+  timeoutMs: { min: 1000, max: 300000 },
+} as const

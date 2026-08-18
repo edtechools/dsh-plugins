@@ -31,7 +31,7 @@ import {
 } from './quote-block.ts'
 // Identity and ranges only — never `../settings.ts`, which would drag
 // schemastery into this bundle (see namespace.ts).
-import { QUOTE_SELECT_NAMESPACE, type QuoteSelectSettings } from '../namespace.ts'
+import { QUOTE_SELECT_NAMESPACE, type QuoteSelectConfig } from '../namespace.ts'
 import { createSettingsStore } from './settings-store.ts'
 import { SettingsCard } from './SettingsCard.tsx'
 import {
@@ -93,7 +93,7 @@ interface SelectionPillProps {
   /** True once the quote budget is spent: both actions refuse rather than truncate the list. */
   readonly full: boolean
   /** Live limits from the plugin's settings section. */
-  readonly limits: QuoteSelectSettings
+  readonly limits: QuoteSelectConfig
   readonly commenting: boolean
   readonly onStartComment: () => void
   readonly onCommit: (comment: string) => void
@@ -246,7 +246,7 @@ function QuoteBadges({ rangesRef, count }: { rangesRef: React.MutableRefObject<R
 interface QuoteStripProps {
   readonly quotes: readonly Quote[]
   /** Live limits from the plugin's settings section. */
-  readonly limits: QuoteSelectSettings
+  readonly limits: QuoteSelectConfig
   readonly onEditComment: (index: number, comment: string) => void
   readonly onRemove: (index: number) => void
   readonly onClear: () => void

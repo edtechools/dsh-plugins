@@ -12,7 +12,7 @@
  * subdirectory, where a workspace dependency would not resolve.
  */
 
-import { DEFAULT_SETTINGS, WEB_SEARCH_NAMESPACE, type WebSearchSettings } from '../namespace.ts'
+import { DEFAULT_CONFIG, WEB_SEARCH_NAMESPACE, type WebSearchConfig } from '../namespace.ts'
 
 /** What the durable section can currently do. */
 export interface SectionStatus {
@@ -21,23 +21,23 @@ export interface SectionStatus {
 }
 
 /** Fields the browser can both read and write; the secret is neither. */
-export type ReadableField = 'endpoint' | 'apiKeyRef' | 'defaultCount' | 'defaultSummary'
+export type ReadableField = 'endpoint' | 'apiKeyRef' | 'defaultCount' | 'defaultSummary' | 'timeoutMs'
 
 /** The configuration, plus which fields the user has overridden. */
 export interface WebSearchStore {
-  get: () => WebSearchSettings
+  get: () => WebSearchConfig
   status: () => SectionStatus
   /**
    * Fields present in the stored user layer. PRESENCE is what marks an
    * override — a stored value equal to the composition base is still an
    * override, and comparing values could not see it.
    */
-  overridden: () => ReadonlySet<keyof WebSearchSettings>
+  overridden: () => ReadonlySet<keyof WebSearchConfig>
   subscribe: (listener: () => void) => () => void
   /** Commit staged edits; only changed fields are written. */
-  save: (patch: Partial<WebSearchSettings>) => Promise<void>
+  save: (patch: Partial<WebSearchConfig>) => Promise<void>
   /** Drop one field's override so it re-inherits the cordis.yml base. */
-  reset: (field: keyof WebSearchSettings) => Promise<void>
+  reset: (field: keyof WebSearchConfig) => Promise<void>
   /**
    * Whether a literal API key is stored; undefined until the Host has said.
    * The value itself is unreadable by construction, so this is the only thing
@@ -79,9 +79,9 @@ const SECRET_FIELD = 'apiKey'
 /** Build the store. Starts at the schema defaults and unattached. */
 export function createSettingsStore(): WebSearchStore {
   const listeners = new Set<() => void>()
-  let value: WebSearchSettings = { ...DEFAULT_SETTINGS }
+  let value: WebSearchConfig = { ...DEFAULT_CONFIG }
   let status: SectionStatus = UNAVAILABLE
-  let overridden: ReadonlySet<keyof WebSearchSettings> = new Set()
+  let overridden: ReadonlySet<keyof WebSearchConfig> = new Set()
   let secretSet: boolean | undefined
   let scope: any
   let api: any
@@ -128,7 +128,7 @@ export function createSettingsStore(): WebSearchStore {
     save: async (patch) => {
       if (scope === undefined) return
       for (const [field, next] of Object.entries(patch)) {
-        if (next === value[field as keyof WebSearchSettings]) continue
+        if (next === value[field as keyof WebSearchConfig]) continue
         // Sequential rather than parallel: the scope fences each write with the
         // revision it last saw, and concurrent writes would race that fence.
         await scope.set(field, next)
@@ -157,22 +157,23 @@ export function createSettingsStore(): WebSearchStore {
           phase: snapshot.status,
           writable: snapshot.writable === true && snapshot.status === 'ready',
         }
-        const nextValue: WebSearchSettings = section === undefined
+        const nextValue: WebSearchConfig = section === undefined
           ? value
           : {
             endpoint: pick(section.endpoint, value.endpoint),
             apiKeyRef: pick(section.apiKeyRef, value.apiKeyRef),
             defaultCount: pick(section.defaultCount, value.defaultCount),
             defaultSummary: pick(section.defaultSummary, value.defaultSummary),
+            timeoutMs: pick(section.timeoutMs, value.timeoutMs),
           }
         const user: unknown = snapshot.user
-        const nextOverridden = new Set<keyof WebSearchSettings>(
+        const nextOverridden = new Set<keyof WebSearchConfig>(
           user === null || typeof user !== 'object'
             ? []
-            : (Object.keys(user) as (keyof WebSearchSettings)[])
-              .filter(field => field in DEFAULT_SETTINGS),
+            : (Object.keys(user) as (keyof WebSearchConfig)[])
+              .filter(field => field in DEFAULT_CONFIG),
         )
-        const changed = (Object.keys(DEFAULT_SETTINGS) as (keyof WebSearchSettings)[])
+        const changed = (Object.keys(DEFAULT_CONFIG) as (keyof WebSearchConfig)[])
           .some(field => nextValue[field] !== value[field])
           || nextStatus.phase !== status.phase
           || nextStatus.writable !== status.writable

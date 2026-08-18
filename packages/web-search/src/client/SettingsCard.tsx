@@ -20,7 +20,7 @@
 
 import * as React from 'react'
 import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { COUNT_RANGE, DEFAULT_SETTINGS, type WebSearchSettings } from '../namespace.ts'
+import { DEFAULT_CONFIG, RANGES, type WebSearchConfig } from '../namespace.ts'
 import type { ReadableField, WebSearchStore } from './settings-store.ts'
 
 /** One editable row. */
@@ -34,20 +34,22 @@ interface FieldSpec {
 const FIELDS: readonly FieldSpec[] = [
   { field: 'endpoint', label: '接口地址', hint: '博查搜索 API 的 endpoint。', kind: 'text' },
   { field: 'apiKeyRef', label: '密钥引用名', hint: '没有直接填密钥时用它去凭据提供方取。', kind: 'text' },
-  { field: 'defaultCount', label: '默认结果数', hint: `模型没指定 count 时用这个。${COUNT_RANGE.min}–${COUNT_RANGE.max}`, kind: 'number' },
+  { field: 'defaultCount', label: '默认结果数', hint: `模型没指定 count 时用这个。${RANGES.defaultCount.min}–${RANGES.defaultCount.max}`, kind: 'number' },
   { field: 'defaultSummary', label: '默认返回摘要', hint: '模型没指定 summary 时用这个。', kind: 'boolean' },
+  { field: 'timeoutMs', label: '单次搜索超时', hint: `毫秒。改它会重新注册工具，所以不影响进行中的一轮。${RANGES.timeoutMs.min}–${RANGES.timeoutMs.max}`, kind: 'number' },
 ]
 
 /** Staged value per field; booleans stay booleans, the rest stage as text. */
 type Draft = Record<ReadableField, string | boolean>
 
 /** Project the committed section into editable form. */
-function draftOf(value: WebSearchSettings): Draft {
+function draftOf(value: WebSearchConfig): Draft {
   return {
     endpoint: value.endpoint,
     apiKeyRef: value.apiKeyRef,
     defaultCount: String(value.defaultCount),
     defaultSummary: value.defaultSummary,
+    timeoutMs: String(value.timeoutMs),
   }
 }
 
@@ -64,7 +66,8 @@ function parseField(spec: FieldSpec, raw: string | boolean): string | number | b
   if (spec.kind === 'text') return raw.trim() === '' ? undefined : raw.trim()
   if (!/^\d+$/.test(raw.trim())) return undefined
   const parsed = Number(raw.trim())
-  return parsed >= COUNT_RANGE.min && parsed <= COUNT_RANGE.max ? parsed : undefined
+  const range = RANGES[spec.field as keyof typeof RANGES]
+  return range !== undefined && parsed >= range.min && parsed <= range.max ? parsed : undefined
 }
 
 /**
@@ -89,6 +92,7 @@ export function SettingsCard({ store }: { store: WebSearchStore }): React.ReactE
     apiKeyRef: React.useId(),
     defaultCount: React.useId(),
     defaultSummary: React.useId(),
+    timeoutMs: React.useId(),
   }
 
   /**
@@ -113,7 +117,7 @@ export function SettingsCard({ store }: { store: WebSearchStore }): React.ReactE
   if (status.phase === 'unavailable') return null
 
   const save = (): void => {
-    const patch: Partial<WebSearchSettings> = {}
+    const patch: Partial<WebSearchConfig> = {}
     FIELDS.forEach((spec, index) => {
       const next = parsed[index]
       if (next !== undefined && next !== value[spec.field]) {
@@ -251,7 +255,7 @@ export function SettingsCard({ store }: { store: WebSearchStore }): React.ReactE
               </div>
               <p className="wbs-hint">
                 {spec.hint}
-                {overridden.has(spec.field) ? null : ` 当前继承自 cordis.yml（${String(DEFAULT_SETTINGS[spec.field])} 为内置默认）。`}
+                {overridden.has(spec.field) ? null : ` 当前继承自 cordis.yml（${String(DEFAULT_CONFIG[spec.field])} 为内置默认）。`}
               </p>
             </div>
           ))}

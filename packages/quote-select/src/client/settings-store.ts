@@ -12,7 +12,7 @@
  * subdirectory, where a workspace dependency would not resolve.
  */
 
-import { DEFAULT_SETTINGS, type QuoteSelectSettings } from '../namespace.ts'
+import { DEFAULT_CONFIG, type QuoteSelectConfig } from '../namespace.ts'
 
 /**
  * What the durable section can currently do. Separate from the value because
@@ -27,7 +27,7 @@ export interface SectionStatus {
 
 /** The limits, shared by the quoting surfaces and the settings card. */
 export interface QuoteSelectStore {
-  get: () => QuoteSelectSettings
+  get: () => QuoteSelectConfig
   status: () => SectionStatus
   subscribe: (listener: () => void) => () => void
   /**
@@ -36,7 +36,7 @@ export interface QuoteSelectStore {
    * @param patch - the staged values.
    * @returns settlement after the last write.
    */
-  save: (patch: Partial<QuoteSelectSettings>) => Promise<void>
+  save: (patch: Partial<QuoteSelectConfig>) => Promise<void>
   /** Bind the durable section; returns the unbind disposer. */
   attach: (scope: any) => () => void
 }
@@ -63,7 +63,7 @@ function pickNumber(raw: unknown, fallback: number): number {
 /** Build the store. Starts at the schema defaults and unattached. */
 export function createSettingsStore(): QuoteSelectStore {
   const listeners = new Set<() => void>()
-  let value: QuoteSelectSettings = { ...DEFAULT_SETTINGS }
+  let value: QuoteSelectConfig = { ...DEFAULT_CONFIG }
   // Unattached is indistinguishable from unavailable to every consumer: with
   // no settings provider composed there is no section to show or write.
   let status: SectionStatus = UNAVAILABLE
@@ -83,7 +83,7 @@ export function createSettingsStore(): QuoteSelectStore {
     save: async (patch) => {
       if (scope === undefined) return
       for (const [field, next] of Object.entries(patch)) {
-        if (next === value[field as keyof QuoteSelectSettings]) continue
+        if (next === value[field as keyof QuoteSelectConfig]) continue
         // Sequential rather than parallel: the scope fences each write with the
         // revision it last saw, and three concurrent writes would race that
         // fence into two spurious rejections.
@@ -102,7 +102,7 @@ export function createSettingsStore(): QuoteSelectStore {
         // Field by field, each with a fallback (see pickNumber): a section the
         // Host has not answered for yet is the easy case, version skew is the
         // one that matters.
-        const nextValue: QuoteSelectSettings = section === undefined
+        const nextValue: QuoteSelectConfig = section === undefined
           ? value
           : {
             maxQuoteLength: pickNumber(section.maxQuoteLength, value.maxQuoteLength),
