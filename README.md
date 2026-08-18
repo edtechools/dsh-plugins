@@ -4,7 +4,8 @@
 
 | 包 | 面 | 作用 |
 |---|---|---|
-| [`packages/turn-nav`](packages/turn-nav) | node + 浏览器 | 对话区左缘的轮次导航条 |
+| [`packages/quote-select`](packages/quote-select) | node + 浏览器 | 选中消息文本 → 引用进输入框，可带评论；带设置卡 |
+| [`packages/turn-nav`](packages/turn-nav) | node + 浏览器 | 对话区左缘的轮次导航条，可标记轮次；带设置卡 |
 | [`packages/theme-toggle`](packages/theme-toggle) | node + 浏览器 | 侧边栏底部的明暗切换 |
 | [`packages/web-search`](packages/web-search) | node | 基于博查搜索 API 的 `bocha_web_search` 工具 |
 
@@ -75,7 +76,7 @@ harness 会维护一个扁平兜底目录 `$DSH_HOME/profiles/node_modules`，�
 
 **这个失败是静默的**：web 服务照常启动、日志无输出、`--dump-config` 照常显示那一行——因为组合成功不等于导入成功。
 
-什么都不 import 的插件不受影响（`turn-nav` 的 node 半边是空的）。一旦 import 了 `@deepseek-ai/dsh-tools` 或任何别的 Service Definition，就会 `ERR_MODULE_NOT_FOUND`。解法是在 peerDependency 旁边补一条指向 harness checkout 的 `link:` devDependency：
+什么都不 import 的插件不受影响（`theme-toggle` 的 node 半边是空的）。一旦 import 了 `@deepseek-ai/dsh-tools`、`@deepseek-ai/dsh-settings` 或任何别的 Service Definition，就会 `ERR_MODULE_NOT_FOUND`。解法是在 peerDependency 旁边补一条指向 harness checkout 的 `link:` devDependency：
 
 ```json
 "peerDependencies": { "@deepseek-ai/dsh-tools": "*" },
@@ -119,9 +120,49 @@ window.__ModuleLoader__.load({ id: "dsh-plugin-turn-nav", factory: (require) => 
 
 另外 harness 自己的客户端构建还支持 CSS Modules（lightningcss 编译 + 自动注入 `<style data-plugin>`），本仓库的配置没有。`turn-nav` 不受影响，它自己手动注入 `<style>`。以后要用 `.module.css`，得把那段插件逻辑搬过来。
 
+## 插件自己的设置卡（需要 dsh ≥ 0.1.0-rc.7）
+
+偏好可以放进产品自己的设置文档（`$DSH_HOME/settings.yaml`），并在 设置 → 插件 里出一张卡，不必退回 `localStorage` 或硬编码常量。
+
+两个现成范例，差别在**写入时机**，照着抄之前先选一种：
+
+- **`turn-nav`：即时生效。** 两个布尔开关，点一下就写。开关没有中间态，没什么可暂存的；这也是产品自己在通用设置里的做法。
+- **`quote-select`：暂存 + 保存/放弃。** 三个数字上限，按键即写是错的（在 `600` 里改一位会先写出 `6`）。内置那三张卡都做暂存，正是这个原因。
+
+**rc.7 之前做不到。** rc.6 的 api-proxy 有一张 `exposedNamespaces()` 允许列表（模型 provider + `WEB_SETTINGS_NAMESPACES` + `PRODUCT_SETTINGS_NAMESPACES`，全部仓库内硬编码），`settings.describe` 按它过滤、写入返回 `settings-not-exposed`，仓库外插件加不进去。rc.7 把这三个符号整个删了。插槽 `settings.plugin.item` 本身 rc.6 就有，只是当时接不通。
+
+两个半边靠**同一个命名空间字符串**配对，tab 不需要知道它是什么意思：
+
+```ts
+// node 半边：可选注入，没有 settings provider 时插件照常工作
+ctx.inject(['settings'], (c) => c.settings.register(settingsNamespace(NS), Schema))
+
+// 浏览器半边：绑定 + 注册卡片（keyed 插槽，选项是 key 不是 id）
+ctx.inject(['settingsScope', 'connection', 'remote'], (c) => {
+  c.effect(() => attach(c.settingsScope.bind({ namespace: NS })), '...')
+})
+ctx.slots.inject('settings.plugin.item', () => ctx.slots.register(
+  { name: 'settings.plugin.item', key: NS }, Card))
+```
+
+四个坑：
+
+1. **命名空间用包名。** 它同时是设置文档的键和卡片的 slot key，两处对不上就静默不显示。
+2. **浏览器半边不要 import 放 schema 的那个文件。** schemastery 不在平台模块表里，会被整个内联进客户端产物。把命名空间常量单独放一个无 import 的文件（`namespace.ts`），两个半边各取所需。
+3. **node 半边从此踩[约束一](#约束一仅限本地开发link-够不着扁平兜底目录)**——它现在 import Service Definition 了，需要那条 `link:` devDependency，否则静默 `ERR_MODULE_NOT_FOUND`。
+4. **卡片得自己画。** 插槽契约写明 "A card draws its own internals"；`ui-settings-plugins` 的 `CardForm` 是包内私有且不在平台模块表里，`schema-form` 只导出模型层（`rehydrateSchema`/`validateDraft`/`setPath`），没有 React 组件。
+
+不起 GUI 也能验证整条链路——直接打 RPC（路径是 `/api/<method>`，方法名里的点不是斜杠）：
+
+```sh
+curl -s -X POST http://127.0.0.1:3080/api/settings.describe \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"client-request","rpcId":"1","method":"settings.describe","payload":{}}'
+```
+
 ## 升级风险
 
-搬出 harness 仓库消除的是合并冲突，不是 API 漂移。`turn-nav` 读了好几个 harness 在预发布期不作兼容承诺的接口——`ctx.sessions.binding()`、对话快照的节点 `kind` 取值、`[data-conversation-scroll]` 与 `[data-chat-anchor-key]` 这两个 DOM 约定、`--dsw-alias-*` 设计令牌、以及 `shell.overlay` 插槽。要预期 harness 升级可能让导航条**静默失效**：上面每一处读取都是无类型的，TypeScript 帮不上忙。
+搬出 harness 仓库消除的是合并冲突，不是 API 漂移。`turn-nav` 读了好几个 harness 在预发布期不作兼容承诺的接口——`ctx.sessions.binding()`、对话快照的节点 `kind` 取值、`[data-conversation-scroll]` 与 `[data-chat-anchor-key]` 这两个 DOM 约定（后者还兼作标记标签的排版基准：正文列左缘是从它量出来的）、`--dsw-alias-*` 设计令牌、以及 `shell.overlay` 插槽。要预期 harness 升级可能让导航条**静默失效**：上面每一处读取都是无类型的，TypeScript 帮不上忙。
 
 这一条和上面两条约束有个共同点：**失败都是静默的**。所以升级 harness 之后先跑 `pnpm check`——平台表漂移和 peer 解析断裂它都能抓到。但它抓不到本节这类 API 漂移：那些读取全是无类型的，只能靠实际打开会话看导航条还在不在。
 
